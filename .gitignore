@@ -1,1 +1,14 @@
 __pycache__/
+.DS_Store
+.build/
+DerivedData/
+*.app
+*.dSYM/
+*.ipa
+*.log
+*.xcresult
+*.xcuserstate
+xcuserdata/
+pairing/
+profiles/
+remote_*.plist
