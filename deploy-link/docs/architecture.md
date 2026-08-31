@@ -26,7 +26,7 @@ pairing material, device identifiers, or Tailnet addresses.
 | --- | --- |
 | Source compilation | Xcode / `xcodebuild` |
 | Development signing | Xcode and Apple's signing assets |
-| Bridge reachability | Tailscale plus the configured iPhone Tailnet IP |
+| Bridge reachability | Tailscale plus the configured iOS device Tailnet IP |
 | Pair verification | The configured owner-only RemotePairing record |
 | Warm session | The long-running Deploy Link daemon |
 | App transfer | Streaming zip conduit over the live RSD session |
@@ -88,13 +88,14 @@ reacquisition.
 ## Network boundary
 
 RemotePairing acquisition requires iOS to expose its listener. Any Wi-Fi
-connection can activate it, and Tailscale lets the Mac reach the explicit
-iPhone endpoint without Bonjour or a shared LAN. Once verified, both outer TCP
-connections remain open while Tailscale changes underlay from Wi-Fi to cellular.
+connection can activate it, and Tailscale lets the Mac reach the explicit iOS
+device endpoint without Bonjour or a shared LAN. Once verified, both outer TCP
+connections remain open across unrelated Wi-Fi networks and, for a
+cellular-capable device, while Tailscale changes underlay from Wi-Fi to cellular.
 
 This is warm-session continuity, not pure-cellular discovery. If the outer
-session terminates while the phone is cold on 5G, the daemon waits until Wi-Fi
-causes iOS to expose RemotePairing again.
+session terminates while the device is on cellular, the daemon waits until
+Wi-Fi causes iOS to expose RemotePairing again.
 
 If Apple's listener moves to another dynamic port, the daemon uses a bounded,
 protocol-verified scan of the known RemotePairing port range. A learned port is

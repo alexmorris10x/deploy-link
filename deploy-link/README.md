@@ -12,7 +12,8 @@ device roams away from its acquisition network.
 > [!IMPORTANT]
 > Establish the Deploy Link bridge first. Xcode builds and signs the app; Deploy
 > Link then installs Xcode's `.app` output through that bridge. This project does
-> not make the iPhone appear as a native remote Xcode Run Destination.
+> not make the paired iOS device appear as a native remote Xcode Run
+> Destination.
 
 ```text
 Xcode build + signing
@@ -24,35 +25,36 @@ signed .app -> Deploy Link CLI -> owner-only Unix socket
                             persistent bridge on macOS
                                       |
                                       v
-                              Tailscale -> iPhone
+                         Tailscale -> paired iOS device
 ```
 
 ### Current network boundary
 
-- The Mac and iPhone may be on different physical networks.
+- The Mac and paired iOS device may be on different physical networks.
 - Both devices must be online in the same Tailscale tailnet.
 - The bridge must first become `active` while iOS exposes RemotePairing. Any
   Wi-Fi connection can open that listener; it does not have to be the Mac's
   LAN.
-- After the bridge is active, the same session can survive a Wi-Fi-to-5G roam
-  and serve repeated installs.
+- After the bridge is active, the same session can serve installs across
+  unrelated Wi-Fi networks. An iPhone session can also survive a Wi-Fi-to-5G
+  roam and serve repeated installs.
 - Each device profile has an independent launchd supervisor, socket, local
   forward port, and log.
-- A cold start on pure 5G is not supported. If the outer session is lost, join
-  any Wi-Fi so the daemon can reacquire the listener.
+- A cold start on pure cellular is not supported. If the outer session is lost,
+  join any Wi-Fi so the daemon can reacquire the listener.
 
 ### Requirements
 
 - Apple-silicon Mac with Xcode Command Line Tools;
-- iPhone with Developer Mode enabled;
-- Tailscale signed into the same tailnet on the Mac and iPhone;
-- an Apple RemotePairing record trusted by the iPhone;
+- iPhone or iPad with Developer Mode enabled;
+- Tailscale signed into the same tailnet on the Mac and iOS device;
+- an Apple RemotePairing record trusted by the iOS device;
 - an Xcode project configured with valid iOS development signing.
 
 ### 1. Bootstrap the pairing identity
 
 If you already have an owner-only `pymobiledevice3` RemotePairing record, reuse
-it. Otherwise, connect the trusted iPhone over USB once and follow the
+it. Otherwise, connect the trusted iOS device over USB once and follow the
 [`pymobiledevice3` iOS 17+ tunnel guide](https://github.com/doronz88/pymobiledevice3/blob/master/docs/guides/ios17-tunnels.md) to install that tool, then create the record:
 
 ```sh
@@ -82,9 +84,9 @@ It does not install Go globally.
 
 ### 3. Configure and start the bridge
 
-Keep the iPhone on any Wi-Fi for this first acquisition. Replace the values
-below with the RemotePairing identifier, the iPhone's Tailscale IP, and the
-absolute path to its pairing record:
+The commands below use an iPhone profile as an example. Keep the device on any
+Wi-Fi for this first acquisition. Replace the values with its RemotePairing
+identifier, Tailscale IP, and pairing-record path:
 
 ```sh
 deploy_link="$HOME/Library/Application Support/Deploy Link/bin/deploy-link"
@@ -144,7 +146,8 @@ For a workspace, replace `-project YourApp.xcodeproj` with
 
 ### 5. Install Xcode's output through the bridge
 
-Once the bridge is active, the iPhone may roam to 5G. Install the signed result:
+Once the bridge is active, the paired device may remain on unrelated Wi-Fi, or
+an iPhone may roam to 5G. Install the signed result:
 
 ```sh
 "$deploy_link" install \
@@ -161,7 +164,7 @@ session. ZipConduit cannot resume, so a later retry starts from byte zero.
 
 The short-lived CLI submits the request to the persistent daemon. Success is
 reported only after streaming zip conduit completes and InstallationProxy reads
-the installed bundle back from the iPhone. Later builds reuse the same warm
+the installed bundle back from the device. Later builds reuse the same warm
 generation.
 
 Useful commands:
@@ -202,8 +205,8 @@ Xcode 构建并签名的 iOS App，可以在设备离开首次连接的网络后
 
 > [!IMPORTANT]
 > 必须先建立 Deploy Link bridge。Xcode 负责构建和签名，Deploy Link 再通过
-> bridge 安装 Xcode 生成的 `.app`。本项目不会让 iPhone 变成 Xcode 原生的远程
-> Run Destination。
+> bridge 安装 Xcode 生成的 `.app`。本项目不会让已配对的 iOS 设备变成 Xcode
+> 原生的远程 Run Destination。
 
 ```text
 Xcode 构建和签名
@@ -215,32 +218,33 @@ Xcode 构建和签名
                               macOS 常驻 bridge
                                       |
                                       v
-                               Tailscale -> iPhone
+                            Tailscale -> 已配对的 iOS 设备
 ```
 
 ### 当前网络边界
 
-- Mac 和 iPhone 可以位于不同的物理网络。
+- Mac 和已配对的 iOS 设备可以位于不同的物理网络。
 - 两台设备必须在线并加入同一个 Tailscale tailnet。
 - iOS 暴露 RemotePairing listener 时，bridge 必须先进入 `active`。任意 Wi-Fi
   都可以打开该 listener，不要求与 Mac 位于同一个局域网。
-- bridge 激活后，同一条 session 可以跨越 Wi-Fi 到 5G 的切换，并用于多次安装。
+- bridge 激活后，同一条 session 可以跨不同 Wi-Fi 网络安装。iPhone session 也
+  可以跨越 Wi-Fi 到 5G 的切换，并用于多次安装。
 - 每个设备 profile 都有独立的 launchd supervisor、socket、本地转发端口和日志。
-- 暂不支持纯 5G 冷启动。外层 session 丢失后，需要让 iPhone 加入任意 Wi-Fi，
+- 暂不支持纯蜂窝网络冷启动。外层 session 丢失后，需要让设备加入任意 Wi-Fi，
   daemon 才能重新获取 listener。
 
 ### 前置条件
 
 - Apple 芯片 Mac，并安装 Xcode Command Line Tools；
-- iPhone 已开启 Developer Mode；
-- Mac 和 iPhone 已登录同一个 Tailscale tailnet；
-- iPhone 已信任的 Apple RemotePairing record；
+- iPhone 或 iPad 已开启 Developer Mode；
+- Mac 和 iOS 设备已登录同一个 Tailscale tailnet；
+- iOS 设备已信任的 Apple RemotePairing record；
 - 已正确配置 iOS 开发签名的 Xcode 项目。
 
 ### 1. 首次建立配对身份
 
 如果已有仅限当前用户访问的 `pymobiledevice3` RemotePairing record，可以直接
-复用。否则先通过 USB 连接并信任 iPhone，按照
+复用。否则先通过 USB 连接并信任 iOS 设备，按照
 [`pymobiledevice3` 的 iOS 17+ tunnel 指南](https://github.com/doronz88/pymobiledevice3/blob/master/docs/guides/ios17-tunnels.md)
 安装该工具，然后生成 record：
 
@@ -270,8 +274,9 @@ patch，并将二进制文件安装到：
 
 ### 3. 配置并启动 bridge
 
-首次连接时先让 iPhone 保持在任意 Wi-Fi。将下列值替换为 RemotePairing
-identifier、iPhone 的 Tailscale IP，以及 pairing record 的绝对路径：
+下列命令以 iPhone profile 为例。首次连接时先让设备保持在任意 Wi-Fi。将下列
+值替换为设备的 RemotePairing identifier、Tailscale IP，以及 pairing record
+的绝对路径：
 
 ```sh
 deploy_link="$HOME/Library/Application Support/Deploy Link/bin/deploy-link"
@@ -327,7 +332,8 @@ xcodebuild \
 
 ### 5. 通过 bridge 安装 Xcode 输出
 
-bridge 激活后，iPhone 可以切换到 5G。安装已签名的构建结果：
+bridge 激活后，已配对的设备可以留在不同的 Wi-Fi 网络，iPhone 也可以切换到
+5G。安装已签名的构建结果：
 
 ```sh
 "$deploy_link" install \
@@ -342,7 +348,7 @@ bridge 激活后，iPhone 可以切换到 5G。安装已签名的构建结果：
 断点续传，因此之后重试会从零开始。
 
 短生命周期 CLI 会把请求交给常驻 daemon。只有 streaming zip conduit 完成，且
-InstallationProxy 从 iPhone 回读到该 bundle 后，命令才会报告成功。之后的构建
+InstallationProxy 从设备回读到该 bundle 后，命令才会报告成功。之后的构建
 会复用同一个 warm generation。
 
 常用命令：

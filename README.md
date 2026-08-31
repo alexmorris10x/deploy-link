@@ -1,13 +1,14 @@
 # Remote iOS Iteration Prototype
 
-This repository tests direct iOS development installs when the Mac and iPhone
-are on different physical networks.
+This repository tests direct iOS development installs when the Mac and a paired
+iPhone or iPad are on different physical networks.
 
 ## Verified result
 
 The fastest proven lane is a warm Apple RemotePairing session carried by
-Tailscale. Xcode still builds and signs the app. The vendored Deploy Link daemon
-keeps the authenticated Apple session open while the iPhone moves from Wi-Fi to
+Tailscale for each device profile. Xcode still builds and signs the app. The
+vendored Deploy Link daemon keeps the authenticated Apple session open while a
+paired device remains on unrelated Wi-Fi or an iPhone moves from Wi-Fi to
 cellular, then installs the signed `.app` through Apple's normal installation
 services.
 
@@ -18,8 +19,19 @@ Xcode signed .app
 Deploy Link CLI -> owner-only local socket -> warm Apple tunnel
                                                 |
                                                 v
-                                      Tailscale -> iPhone
+                                Tailscale -> iPhone or iPad
 ```
+
+On August 31, 2026, this lane delivered the signed Audiobook Player Beta
+artifact identified as version `1.1.8` build `20260831131723` to the paired iPad
+Mini while the iPad used coffee-shop Wi-Fi and the Mac used a different
+physical network. The full install of the 156,181,588-byte payload took 20
+minutes 30.569 seconds. It continued beyond the old five-minute total deadline
+because real transfer progress reset the rolling no-progress limit, then
+reached Apple's `InstallComplete` and `DataComplete` states and passed
+InstallationProxy bundle-identifier readback. This confirms the iPad profile
+and unrelated-Wi-Fi installation lane. The exact on-device version and build,
+and the app's runtime behavior, were not separately verified.
 
 On August 30, 2026, this lane installed two signed Audiobook Player Beta builds
 through the same warm session. Each app payload was about 149.8 MB. The second
@@ -44,13 +56,15 @@ under the same cellular conditions. After Wi-Fi returned, `devicectl` read back
 
 This is warm-session continuity, not a pure-cellular cold start.
 
-- Start Deploy Link while the iPhone is on any Wi-Fi and Tailscale is connected.
+- Start each named Deploy Link profile while its device is on any Wi-Fi and
+  Tailscale is connected.
 - Wait until the bridge reports `active`.
-- The iPhone can then move to cellular and accept repeated direct installs.
-- If the Apple session ends, the iPhone must join any Wi-Fi so the daemon can
+- The device can then accept installs from unrelated Wi-Fi. A cellular-capable
+  iPhone can also move to cellular and accept repeated direct installs.
+- If the Apple session ends, the device must join any Wi-Fi so the daemon can
   acquire a new RemotePairing listener.
 
-The iPhone does not need to share the Mac's local network. This prototype does
+The device does not need to share the Mac's local network. This prototype does
 not yet provide a native Xcode Run Destination, LLDB debugging, or live device
 console access.
 
@@ -93,9 +107,9 @@ private Apple pairing record and must never be committed or shared.
 
 ## Pair and configure each device
 
-Create a RemotePairing record while the iPhone is available locally. Follow the
+Create a RemotePairing record while the device is available locally. Follow the
 [`pymobiledevice3` iOS 17+ tunnel guide](https://github.com/doronz88/pymobiledevice3/blob/master/docs/guides/ios17-tunnels.md).
-On current iOS, the matching phone screen is:
+On current iOS and iPadOS, the matching device screen is:
 
 ```text
 Settings -> Privacy & Security -> Developer Mode -> Other Devices
@@ -142,7 +156,8 @@ In another terminal:
 "$deploy_link" status --profile "$profile"
 ```
 
-Do not switch the iPhone to cellular until the state is `active`. The service
+Do not change the named device's network until the state is `active`. An iPhone
+may then switch to cellular; an iPad can remain on unrelated Wi-Fi. The service
 survives terminal and Codex exits, restarts after a process failure, and waits
 instead of replacing a foreground daemon that already owns the profile. Each
 device has a separate service, socket, local port, and log. On AC power, the
@@ -154,11 +169,12 @@ It cannot create a cold Apple listener. A Mac restart, closed laptop lid, iOS
 restart, or ended Apple session can still require the device to join Wi-Fi or a
 hotspot once before it becomes `active` again.
 
-## Build and install over cellular
+## Build and install remotely
 
-Build one signed iPhone app with the project's normal Xcode development lane.
-After Deploy Link is active, turn off iPhone Wi-Fi, leave Tailscale connected,
-and install the signed app output:
+Build one signed iOS or iPadOS app with the project's normal Xcode development
+lane. After Deploy Link is active, keep the paired device on unrelated Wi-Fi or
+move an iPhone to cellular, leave Tailscale connected, and install the signed
+app output:
 
 ```sh
 "$deploy_link" install \
