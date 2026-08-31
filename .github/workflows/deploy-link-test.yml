@@ -1,0 +1,23 @@
+name: Deploy Link Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-26
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: deploy-link
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify Deploy Link
+        env:
+          DEPLOY_LINK_RUNTIME_ROOT: ${{ runner.temp }}/deploy-link-runtime
+        run: ./scripts/test.sh
