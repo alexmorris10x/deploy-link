@@ -67,10 +67,15 @@ func errorResponse(err error) Response {
 
 func prepareUnixListener(socketPath string) (net.Listener, error) {
 	if _, err := os.Lstat(socketPath); err == nil {
-		connection, dialErr := net.DialTimeout("unix", socketPath, 500*time.Millisecond)
-		if dialErr == nil {
-			_ = connection.Close()
-			return nil, coded("deploy_link_already_running", "another Deploy Link process owns the control socket", nil)
+		for attempt := 0; attempt < 3; attempt++ {
+			connection, dialErr := net.DialTimeout("unix", socketPath, 500*time.Millisecond)
+			if dialErr == nil {
+				_ = connection.Close()
+				return nil, coded("deploy_link_already_running", "another Deploy Link process owns the control socket", nil)
+			}
+			if attempt < 2 {
+				time.Sleep(250 * time.Millisecond)
+			}
 		}
 		if err := os.Remove(socketPath); err != nil {
 			return nil, coded("control_socket_failed", "could not remove a stale control socket", err)

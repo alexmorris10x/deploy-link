@@ -88,9 +88,153 @@ func TestDaemonClassifiesColdAcquisition(t *testing.T) {
 	daemon.openSession = func(context.Context, Config) (sessionHandle, error) {
 		return nil, coded("remote_pairing_cold", "listener closed", nil)
 	}
+	daemon.discoverPort = func(context.Context, Config) (int, error) {
+		return 0, coded("remote_pairing_cold", "listener closed", nil)
+	}
 	daemon.establish(context.Background())
 	if got := daemon.Snapshot(); got.State != StateWaiting || got.LastErrorCode != "remote_pairing_cold" || got.Generation != 0 {
 		t.Fatalf("snapshot = %#v", got)
+	}
+}
+
+func TestDaemonLearnsChangedRemotePairingPort(t *testing.T) {
+	daemon := testDaemon(t)
+	session := &fakeSession{done: make(chan error, 1)}
+	var openedPorts []int
+	daemon.openSession = func(_ context.Context, config Config) (sessionHandle, error) {
+		openedPorts = append(openedPorts, config.RemotePairingPort)
+		if len(openedPorts) == 1 {
+			return nil, coded("remote_pairing_cold", "listener moved", nil)
+		}
+		return session, nil
+	}
+	daemon.discoverPort = func(context.Context, Config) (int, error) {
+		return 52592, nil
+	}
+	daemon.establish(context.Background())
+	if got := daemon.Snapshot(); got.State != StateActive || got.Generation != 1 {
+		t.Fatalf("snapshot = %#v", got)
+	}
+	if len(openedPorts) != 2 || openedPorts[0] != 49152 || openedPorts[1] != 52592 {
+		t.Fatalf("opened ports = %#v", openedPorts)
+	}
+	if daemon.config.RemotePairingPort != 52592 {
+		t.Fatalf("runtime port = %d, want 52592", daemon.config.RemotePairingPort)
+	}
+}
+
+func TestDaemonDoesNotLearnUnverifiedRemotePairingPort(t *testing.T) {
+	daemon := testDaemon(t)
+	var openedPorts []int
+	daemon.openSession = func(_ context.Context, config Config) (sessionHandle, error) {
+		openedPorts = append(openedPorts, config.RemotePairingPort)
+		if len(openedPorts) == 1 {
+			return nil, coded("remote_pairing_cold", "listener moved", nil)
+		}
+		return nil, coded("pair_verify_failed", "different paired device", nil)
+	}
+	daemon.discoverPort = func(context.Context, Config) (int, error) {
+		return 52592, nil
+	}
+	daemon.establish(context.Background())
+	if daemon.config.RemotePairingPort != 49152 {
+		t.Fatalf("runtime port = %d, want original 49152", daemon.config.RemotePairingPort)
+	}
+	if got := daemon.Snapshot(); got.LastErrorCode != "pair_verify_failed" || got.Generation != 0 {
+		t.Fatalf("snapshot = %#v", got)
+	}
+}
+
+func TestDaemonRateLimitsRemotePairingDiscovery(t *testing.T) {
+	daemon := testDaemon(t)
+	daemon.openSession = func(context.Context, Config) (sessionHandle, error) {
+		return nil, coded("remote_pairing_cold", "listener closed", nil)
+	}
+	var discoveries atomic.Int32
+	daemon.discoverPort = func(context.Context, Config) (int, error) {
+		discoveries.Add(1)
+		return 0, coded("remote_pairing_cold", "listener closed", nil)
+	}
+	now := time.Unix(1_800_000_000, 0)
+	daemon.now = func() time.Time { return now }
+	daemon.establish(context.Background())
+	daemon.establish(context.Background())
+	if got := discoveries.Load(); got != 1 {
+		t.Fatalf("discoveries = %d, want 1", got)
+	}
+	now = now.Add(remotePairingDiscoveryRetryInitial)
+	daemon.establish(context.Background())
+	if got := discoveries.Load(); got != 2 {
+		t.Fatalf("discoveries after interval = %d, want 2", got)
+	}
+}
+
+func TestTrustedSessionResetsDiscoveryBackoff(t *testing.T) {
+	daemon := testDaemon(t)
+	session := &fakeSession{done: make(chan error, 1)}
+	var opens atomic.Int32
+	daemon.openSession = func(context.Context, Config) (sessionHandle, error) {
+		switch opens.Add(1) {
+		case 1, 3:
+			return nil, coded("remote_pairing_cold", "listener closed", nil)
+		default:
+			return session, nil
+		}
+	}
+	var discoveries atomic.Int32
+	daemon.discoverPort = func(context.Context, Config) (int, error) {
+		discoveries.Add(1)
+		return 0, coded("remote_pairing_cold", "listener closed", nil)
+	}
+	now := time.Unix(1_800_000_000, 0)
+	daemon.now = func() time.Time { return now }
+	daemon.establish(context.Background())
+	daemon.establish(context.Background())
+	if got := daemon.Snapshot(); got.State != StateActive {
+		t.Fatalf("snapshot = %#v", got)
+	}
+	daemon.mu.Lock()
+	daemon.session = nil
+	daemon.mu.Unlock()
+	daemon.establish(context.Background())
+	if got := discoveries.Load(); got != 2 {
+		t.Fatalf("discoveries = %d, want immediate second discovery after trusted session", got)
+	}
+}
+
+func TestDaemonRejectsSiblingProfileForwardPortCollision(t *testing.T) {
+	first := testDaemon(t)
+	first.openSession = func(context.Context, Config) (sessionHandle, error) {
+		return nil, coded("remote_pairing_cold", "listener closed", nil)
+	}
+	first.discoverPort = func(context.Context, Config) (int, error) {
+		return 0, coded("remote_pairing_cold", "listener closed", nil)
+	}
+	secondProfile := filepath.Join(filepath.Dir(first.profilePath), "ipad.json")
+	second, err := NewDaemon(first.config, secondProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	served := make(chan error, 1)
+	go func() { served <- first.Serve(ctx) }()
+	deadline := time.Now().Add(time.Second)
+	for !profileDaemonAvailable(context.Background(), first.profilePath) {
+		if time.Now().After(deadline) {
+			cancel()
+			<-served
+			t.Fatal("first profile daemon did not become available")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := second.Serve(context.Background()); errorCode(err) != "local_forward_port_conflict" {
+		cancel()
+		<-served
+		t.Fatalf("second Serve error = %v, want local_forward_port_conflict", err)
+	}
+	cancel()
+	if err := <-served; err != nil {
+		t.Fatal(err)
 	}
 }
 

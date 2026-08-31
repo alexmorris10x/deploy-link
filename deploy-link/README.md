@@ -4,10 +4,10 @@
 
 ## English
 
-Deploy Xcode-built apps beyond the local network. Deploy Link keeps one
-authenticated Apple RemotePairing tunnel open over Tailscale, so a signed iOS
-app built on a Mac can be installed on a paired iPhone after the phone roams
-from Wi-Fi to 5G.
+Deploy Xcode-built apps beyond the local network. Deploy Link keeps an
+authenticated Apple RemotePairing tunnel open over Tailscale for each device
+profile, so a signed iOS app built on a Mac can be installed after a paired
+device roams away from its acquisition network.
 
 > [!IMPORTANT]
 > Establish the Deploy Link bridge first. Xcode builds and signs the app; Deploy
@@ -36,6 +36,8 @@ signed .app -> Deploy Link CLI -> owner-only Unix socket
   LAN.
 - After the bridge is active, the same session can survive a Wi-Fi-to-5G roam
   and serve repeated installs.
+- Each device profile has an independent launchd supervisor, socket, local
+  forward port, and log.
 - A cold start on pure 5G is not supported. If the outer session is lost, join
   any Wi-Fi so the daemon can reacquire the listener.
 
@@ -104,6 +106,22 @@ Do not switch the iPhone to 5G until `status` reports `active`. The default
 RemotePairing port is `49152`; pass `--remote-pairing-port` to `configure` only
 when the discovered listener uses a different port.
 
+Repeat configuration and LaunchAgent installation for an iPad or another
+iPhone. Give each profile a different `--local-forward-port`. The supervisor
+waits if a foreground daemon already owns that profile, so installing it does
+not intentionally stop a working session. It also requests an idle-sleep
+assertion while the Mac is on AC power. A closed laptop lid or Mac restart can
+still end the warm Apple connection.
+
+Installing the same profile again does not restart its loaded service. Schedule
+an intentional remove-and-install upgrade while the device can expose its
+listener, because replacing the service process ends the warm session.
+
+When Apple changes the listener port, Deploy Link uses a rate-limited,
+protocol-verified scan and retains the learned port in memory. This removes the
+usual manual port update, but it cannot expose a listener that iOS has closed
+on cellular.
+
 ### 4. Build and sign with Xcode
 
 Build a device app with your normal Apple development team and provisioning
@@ -148,6 +166,10 @@ Useful commands:
 "$deploy_link" launch-agent remove --profile "$profile"
 ```
 
+For a supervised profile, `stop` recycles the current daemon and the supervisor
+starts it again. Use `launch-agent remove` to stop and disable that profile
+service.
+
 ### Development
 
 ```sh
@@ -167,9 +189,9 @@ from [`danielpaulus/go-ios`](https://github.com/danielpaulus/go-ios); see
 
 ## 中文
 
-Deploy Link 用于在局域网之外安装由 Xcode 构建的 App。它通过 Tailscale
-持续保有一条经过认证的 Apple RemotePairing 隧道，使 Mac 上由 Xcode 构建并
-签名的 iOS App，可以在已配对的 iPhone 从 Wi-Fi 切换到 5G 后继续安装。
+Deploy Link 用于在局域网之外安装由 Xcode 构建的 App。它为每个设备 profile
+通过 Tailscale 持续保有一条经过认证的 Apple RemotePairing 隧道，使 Mac 上由
+Xcode 构建并签名的 iOS App，可以在设备离开首次连接的网络后继续安装。
 
 > [!IMPORTANT]
 > 必须先建立 Deploy Link bridge。Xcode 负责构建和签名，Deploy Link 再通过
@@ -196,6 +218,7 @@ Xcode 构建和签名
 - iOS 暴露 RemotePairing listener 时，bridge 必须先进入 `active`。任意 Wi-Fi
   都可以打开该 listener，不要求与 Mac 位于同一个局域网。
 - bridge 激活后，同一条 session 可以跨越 Wi-Fi 到 5G 的切换，并用于多次安装。
+- 每个设备 profile 都有独立的 launchd supervisor、socket、本地转发端口和日志。
 - 暂不支持纯 5G 冷启动。外层 session 丢失后，需要让 iPhone 加入任意 Wi-Fi，
   daemon 才能重新获取 listener。
 
@@ -263,6 +286,20 @@ profile="$HOME/Library/Application Support/Deploy Link/iphone.json"
 端口是 `49152`；只有实际发现的 listener 使用其他端口时，才需要在 `configure`
 中传入 `--remote-pairing-port`。
 
+配置 iPad 或其他 iPhone 时，请为每个 profile 设置不同的
+`--local-forward-port`，并分别安装 LaunchAgent。supervisor 会等待已占用该
+profile socket 的前台 daemon，因此安装服务不会主动中断正在工作的 session。
+Mac 使用交流电源时，服务还会请求阻止系统因空闲而睡眠。合上 MacBook 屏幕或
+重启 Mac 仍可能结束 Apple session。
+
+对同一个 profile 再次执行安装不会重启已加载的服务。若要升级服务，请在设备
+可以暴露 listener 时明确执行移除和重新安装，因为替换服务进程会结束 warm
+session。
+
+Apple 改变 listener 端口后，Deploy Link 会执行限频且经过协议验证的扫描，并在
+内存中保留新端口。该功能可以减少手动更新端口，但无法让 iOS 在纯蜂窝网络上
+重新开放已经关闭的 listener。
+
 ### 4. 使用 Xcode 构建并签名
 
 使用正常的 Apple 开发团队与 provisioning profile 构建设备 App。例如：
@@ -303,6 +340,9 @@ InstallationProxy 从 iPhone 回读到该 bundle 后，命令才会报告成功�
 "$deploy_link" stop --profile "$profile"
 "$deploy_link" launch-agent remove --profile "$profile"
 ```
+
+对于受 supervisor 管理的 profile，`stop` 会回收当前 daemon，supervisor 随后会
+重新启动它。若要停止并禁用该 profile 服务，请使用 `launch-agent remove`。
 
 ### 开发与验证
 

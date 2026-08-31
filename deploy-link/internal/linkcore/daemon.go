@@ -22,11 +22,13 @@ const (
 )
 
 type Daemon struct {
-	config      Config
-	profilePath string
-	socketPath  string
-	openSession func(context.Context, Config) (sessionHandle, error)
-	validateApp func(context.Context, string) (AppBundle, error)
+	config       Config
+	profilePath  string
+	socketPath   string
+	openSession  func(context.Context, Config) (sessionHandle, error)
+	discoverPort func(context.Context, Config) (int, error)
+	validateApp  func(context.Context, string) (AppBundle, error)
+	now          func() time.Time
 
 	mu              sync.RWMutex
 	operationMu     sync.Mutex
@@ -36,6 +38,8 @@ type Daemon struct {
 	installCount    uint64
 	installAttempts uint64
 	lastErrorCode   string
+	nextDiscovery   time.Time
+	discoveryFails  uint
 	session         sessionHandle
 	cancel          context.CancelFunc
 }
@@ -59,7 +63,9 @@ func NewDaemon(config Config, profilePath string) (*Daemon, error) {
 		openSession: func(ctx context.Context, config Config) (sessionHandle, error) {
 			return OpenSession(ctx, config)
 		},
-		validateApp: ValidateApp,
+		discoverPort: discoverRemotePairingPort,
+		validateApp:  ValidateApp,
+		now:          time.Now,
 	}, nil
 }
 
@@ -88,6 +94,38 @@ func (d *Daemon) currentSession() sessionHandle {
 	return d.session
 }
 
+func (d *Daemon) openWithTimeout(ctx context.Context, config Config) (sessionHandle, error) {
+	connectCtx, cancel := context.WithTimeout(ctx, config.ConnectTimeout())
+	defer cancel()
+	return d.openSession(connectCtx, config)
+}
+
+func (d *Daemon) discoveryDue() bool {
+	return d.nextDiscovery.IsZero() || !d.now().Before(d.nextDiscovery)
+}
+
+func (d *Daemon) recordDiscovery(success bool) {
+	if success {
+		d.discoveryFails = 0
+		d.nextDiscovery = d.now().Add(remotePairingDiscoverySuccessInterval)
+		return
+	}
+	d.discoveryFails++
+	delay := remotePairingDiscoveryRetryInitial
+	for attempt := uint(1); attempt < d.discoveryFails && delay < remotePairingDiscoveryRetryMaximum; attempt++ {
+		delay *= 2
+		if delay > remotePairingDiscoveryRetryMaximum {
+			delay = remotePairingDiscoveryRetryMaximum
+		}
+	}
+	d.nextDiscovery = d.now().Add(delay)
+}
+
+func (d *Daemon) resetDiscovery() {
+	d.discoveryFails = 0
+	d.nextDiscovery = time.Time{}
+}
+
 func (d *Daemon) establish(ctx context.Context) {
 	d.operationMu.Lock()
 	defer d.operationMu.Unlock()
@@ -95,9 +133,22 @@ func (d *Daemon) establish(ctx context.Context) {
 		return
 	}
 	d.setState(StateConnecting, "")
-	connectCtx, cancel := context.WithTimeout(ctx, d.config.ConnectTimeout())
-	session, err := d.openSession(connectCtx, d.config)
-	cancel()
+	config := d.config
+	session, err := d.openWithTimeout(ctx, config)
+	if err != nil && errorCode(err) == "remote_pairing_cold" && d.discoveryDue() {
+		discoveryCtx, cancel := context.WithTimeout(ctx, remotePairingDiscoveryTimeout)
+		port, discoveryErr := d.discoverPort(discoveryCtx, config)
+		cancel()
+		d.recordDiscovery(discoveryErr == nil)
+		if discoveryErr == nil {
+			config.RemotePairingPort = port
+			slog.Info("Deploy Link discovered a RemotePairing listener", "port", port)
+			session, err = d.openWithTimeout(ctx, config)
+			if err == nil {
+				d.config.RemotePairingPort = port
+			}
+		}
+	}
 	if err != nil {
 		code := errorCode(err)
 		d.setState(StateWaiting, code)
@@ -108,6 +159,7 @@ func (d *Daemon) establish(ctx context.Context) {
 	}
 	d.mu.Lock()
 	d.session = session
+	d.resetDiscovery()
 	d.generation++
 	d.state = StateActive
 	d.lastErrorCode = ""
@@ -259,6 +311,24 @@ func (d *Daemon) Serve(parent context.Context) error {
 	ctx, cancel := context.WithCancel(parent)
 	d.cancel = cancel
 	defer cancel()
+	daemonLock, err := acquireAdvisoryLock(
+		daemonLockPath(d.socketPath),
+		"deploy_link_already_running",
+		"another Deploy Link process owns this profile",
+	)
+	if err != nil {
+		return err
+	}
+	defer daemonLock.Close()
+	forwardLock, err := acquireAdvisoryLock(
+		forwardPortLockPath(d.config.LocalForwardPort),
+		"local_forward_port_conflict",
+		"another Deploy Link profile owns the configured local forward port",
+	)
+	if err != nil {
+		return err
+	}
+	defer forwardLock.Close()
 	listener, err := prepareUnixListener(d.socketPath)
 	if err != nil {
 		return err
@@ -266,6 +336,18 @@ func (d *Daemon) Serve(parent context.Context) error {
 	defer func() {
 		_ = listener.Close()
 		_ = os.Remove(d.socketPath)
+	}()
+	defer func() {
+		cancel()
+		d.setState(StateStopping, "")
+		d.operationMu.Lock()
+		if session := d.currentSession(); session != nil {
+			_ = session.Close()
+			d.mu.Lock()
+			d.session = nil
+			d.mu.Unlock()
+		}
+		d.operationMu.Unlock()
 	}()
 	go d.connectionLoop(ctx)
 	go func() {
@@ -283,14 +365,5 @@ func (d *Daemon) Serve(parent context.Context) error {
 		}
 		go d.handleConnection(ctx, connection)
 	}
-	d.setState(StateStopping, "")
-	d.operationMu.Lock()
-	if session := d.currentSession(); session != nil {
-		_ = session.Close()
-		d.mu.Lock()
-		d.session = nil
-		d.mu.Unlock()
-	}
-	d.operationMu.Unlock()
 	return nil
 }

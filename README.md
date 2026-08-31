@@ -61,7 +61,7 @@ It is a downstream copy based on:
 
 - source: `zjz-connect/xcode-deploy-link-deploy-beyond-local-network`;
 - commit: `66a39ee4da4ac7f6ad26c871552120ad56ead92b`;
-- version: `0.7.0`;
+- version: `0.8.0`;
 - Link Core: `danielpaulus/go-ios` at
   `3ebc297691a9e364772aef027744ebc0c49421a5`; and
 - Link Core patch SHA-256:
@@ -91,7 +91,7 @@ That directory is durable local tool state. Keep it while the bridge is in use.
 Remove it only when intentionally uninstalling Deploy Link. It can contain a
 private Apple pairing record and must never be committed or shared.
 
-## Pair and configure one iPhone
+## Pair and configure each device
 
 Create a RemotePairing record while the iPhone is available locally. Follow the
 [`pymobiledevice3` iOS 17+ tunnel guide](https://github.com/doronz88/pymobiledevice3/blob/master/docs/guides/ios17-tunnels.md).
@@ -124,13 +124,16 @@ profile="$HOME/.local/share/deploy-link/profiles/iphone.json"
 "$deploy_link" doctor --profile "$profile"
 ```
 
-## Start a warm session
+Use a different `--local-forward-port` for every additional device. For
+example, keep `61015` for the iPhone and use `61016` for the iPad.
 
-Keep the iPhone on Wi-Fi and Tailscale for this step. Run the daemon in the
-foreground during prototype testing:
+## Start durable warm sessions
+
+Keep each device on Wi-Fi or a hotspot, with Tailscale connected, for its first
+acquisition. Install one isolated macOS service per profile:
 
 ```sh
-"$deploy_link" serve --profile "$profile"
+"$deploy_link" launch-agent install --profile "$profile"
 ```
 
 In another terminal:
@@ -139,9 +142,17 @@ In another terminal:
 "$deploy_link" status --profile "$profile"
 ```
 
-Do not switch the iPhone to cellular until the state is `active`. The launch
-agent path is included in the vendored module, but it is not part of the
-verified proof yet.
+Do not switch the iPhone to cellular until the state is `active`. The service
+survives terminal and Codex exits, restarts after a process failure, and waits
+instead of replacing a foreground daemon that already owns the profile. Each
+device has a separate service, socket, local port, and log. On AC power, the
+service asks macOS to prevent idle system sleep.
+
+Deploy Link can relearn a changed RemotePairing port with a bounded,
+protocol-verified scan. Failed scans back off to avoid continuous device load.
+It cannot create a cold Apple listener. A Mac restart, closed laptop lid, iOS
+restart, or ended Apple session can still require the device to join Wi-Fi or a
+hotspot once before it becomes `active` again.
 
 ## Build and install over cellular
 

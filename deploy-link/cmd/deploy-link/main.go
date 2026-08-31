@@ -115,6 +115,20 @@ func serve(arguments []string) error {
 	return daemon.Serve(ctx)
 }
 
+func supervise(arguments []string) error {
+	flags := flag.NewFlagSet("supervise", flag.ContinueOnError)
+	profile := flags.String("profile", "", "absolute profile path")
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	if _, err := linkcore.LoadConfig(*profile); err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return linkcore.Supervise(ctx, *profile)
+}
+
 func call(arguments []string, command string) error {
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	profile := flags.String("profile", "", "absolute profile path")
@@ -188,7 +202,7 @@ func launchAgent(arguments []string) error {
 		emit(map[string]any{"ok": true, "event": "launch_agent_installed"})
 		return nil
 	case "remove":
-		if err := linkcore.RemoveLaunchAgent(); err != nil {
+		if err := linkcore.RemoveLaunchAgent(*profile); err != nil {
 			return err
 		}
 		emit(map[string]any{"ok": true, "event": "launch_agent_removed"})
@@ -200,7 +214,7 @@ func launchAgent(arguments []string) error {
 
 func run(arguments []string) error {
 	if len(arguments) == 0 {
-		return errors.New("command required: configure, doctor, serve, status, watch, install, stop, launch-agent, version")
+		return errors.New("command required: configure, doctor, serve, supervise, status, watch, install, stop, launch-agent, version")
 	}
 	switch arguments[0] {
 	case "configure":
@@ -209,6 +223,8 @@ func run(arguments []string) error {
 		return doctor(arguments[1:])
 	case "serve":
 		return serve(arguments[1:])
+	case "supervise":
+		return supervise(arguments[1:])
 	case "status", "install", "stop":
 		return call(arguments[1:], arguments[0])
 	case "watch":
