@@ -135,8 +135,7 @@ func call(arguments []string, command string) error {
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
-	config, err := linkcore.LoadConfig(*profile)
-	if err != nil {
+	if _, err := linkcore.LoadConfig(*profile); err != nil {
 		return err
 	}
 	request := linkcore.Request{Command: command}
@@ -152,7 +151,7 @@ func call(arguments []string, command string) error {
 	}
 	timeout := 10 * time.Second
 	if command == "install" {
-		timeout = config.InstallTimeout() + 30*time.Second
+		timeout = linkcore.MaximumInstallHardTimeout() + 30*time.Second
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()

@@ -15,6 +15,11 @@ import (
 
 const SchemaVersion = 4
 
+const (
+	installMinimumHardTimeout  = 30 * time.Minute
+	installMaximumStallTimeout = 30 * time.Minute
+)
+
 var remoteIdentifierPattern = regexp.MustCompile(`^[A-Za-z0-9-]{8,128}$`)
 var tailscaleIPv4 = netip.MustParsePrefix("100.64.0.0/10")
 var tailscaleIPv6 = netip.MustParsePrefix("fd7a:115c:a1e0::/48")
@@ -51,8 +56,20 @@ func (c Config) RetryInterval() time.Duration {
 	return time.Duration(c.RetryIntervalSeconds) * time.Second
 }
 
-func (c Config) InstallTimeout() time.Duration {
+func (c Config) InstallStallTimeout() time.Duration {
 	return time.Duration(c.InstallTimeoutSeconds) * time.Second
+}
+
+func (c Config) InstallHardTimeout() time.Duration {
+	timeout := 6 * c.InstallStallTimeout()
+	if timeout < installMinimumHardTimeout {
+		return installMinimumHardTimeout
+	}
+	return timeout
+}
+
+func MaximumInstallHardTimeout() time.Duration {
+	return 6 * installMaximumStallTimeout
 }
 
 func validatePort(name string, value int) error {
@@ -98,7 +115,7 @@ func (c Config) Validate() error {
 	if err := validateSeconds("retry_interval_seconds", c.RetryIntervalSeconds, 2, 300); err != nil {
 		return err
 	}
-	if err := validateSeconds("install_timeout_seconds", c.InstallTimeoutSeconds, 30, 1800); err != nil {
+	if err := validateSeconds("install_timeout_seconds", c.InstallTimeoutSeconds, 30, int(installMaximumStallTimeout/time.Second)); err != nil {
 		return err
 	}
 	return nil

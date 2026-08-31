@@ -2,10 +2,12 @@ package linkcore
 
 import (
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func testConfig(t *testing.T) (Config, string) {
@@ -27,6 +29,14 @@ func testConfig(t *testing.T) (Config, string) {
 	config.RemoteIdentifier = "00008140-001A2D3602A0801C"
 	config.TargetTailnetIP = "100.91.2.3"
 	config.PairRecordPath = pairRecord
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.LocalForwardPort = listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
 	return config, filepath.Join(directory, "iphone.json")
 }
 
@@ -48,6 +58,23 @@ func TestConfigRoundTripIsOwnerOnly(t *testing.T) {
 	}
 	if loaded != config {
 		t.Fatalf("loaded config = %#v, want %#v", loaded, config)
+	}
+}
+
+func TestInstallTimeoutUsesIdleWindowAndGenerousHardLimit(t *testing.T) {
+	config := DefaultConfig()
+	if got := config.InstallStallTimeout(); got != 5*time.Minute {
+		t.Fatalf("stall timeout = %s, want 5m", got)
+	}
+	if got := config.InstallHardTimeout(); got != 30*time.Minute {
+		t.Fatalf("hard timeout = %s, want 30m", got)
+	}
+	config.InstallTimeoutSeconds = 1800
+	if got := config.InstallHardTimeout(); got != 3*time.Hour {
+		t.Fatalf("maximum configured hard timeout = %s, want 3h", got)
+	}
+	if got := MaximumInstallHardTimeout(); got != 3*time.Hour {
+		t.Fatalf("maximum hard timeout = %s, want 3h", got)
 	}
 }
 

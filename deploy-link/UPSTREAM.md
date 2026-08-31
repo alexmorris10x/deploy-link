@@ -14,14 +14,15 @@ The installer pins Link Core to:
 - repository: `https://github.com/danielpaulus/go-ios.git`
 - commit: `3ebc297691a9e364772aef027744ebc0c49421a5`
 - patch SHA-256:
-  `78e96fa84ba4f15116ca5fc978c75383f2f9cacd523de02284aa3d12691663d9`
+  `4dc515286bf1fce9df7191daf9289c55e77e7c6d73b35c9388b5bc5237a6e5ed`
 - license: MIT, Copyright (c) 2019 danielpaulus
 
 The downstream source adds structured, privacy-filtered install-transfer
 diagnostics in `internal/linkcore/daemon.go`, `session.go`, and
 `install_diagnostics.go`. The Link Core patch adds the explicit Tailnet dial
-path and byte-progress callback needed by those diagnostics. The upstream
-commit above remains the import base, not a claim that this tree is unchanged.
+path, context-bounded service setup, and byte-progress callback needed by those
+diagnostics. The upstream commit above remains the import base, not a claim that
+this tree is unchanged.
 
 No live runtime files were copied into this directory. Pairing records,
 profiles, caches, logs, downloaded toolchains, and compiled binaries stay under

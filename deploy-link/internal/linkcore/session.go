@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/danielpaulus/go-ios/ios"
 	"github.com/danielpaulus/go-ios/ios/installationproxy"
@@ -17,6 +18,125 @@ type Session struct {
 	device    ios.DeviceEntry
 	tunnel    tunnel.Tunnel
 	closeOnce sync.Once
+}
+
+var errInstallStalled = errors.New("install made no progress")
+
+type installProgressTracker struct {
+	mu sync.Mutex
+
+	phase         string
+	bytesSent     uint64
+	devicePercent int
+	deviceStatus  string
+}
+
+func newInstallProgressTracker() *installProgressTracker {
+	return &installProgressTracker{devicePercent: -1}
+}
+
+func (tracker *installProgressTracker) transferAdvanced(phase string, bytesSent uint64) bool {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	advanced := phase != tracker.phase || bytesSent > tracker.bytesSent
+	tracker.phase = phase
+	if bytesSent > tracker.bytesSent {
+		tracker.bytesSent = bytesSent
+	}
+	return advanced
+}
+
+func (tracker *installProgressTracker) deviceAdvanced(percent int, status string) bool {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	advanced := tracker.phase != "device_installing" ||
+		percent > tracker.devicePercent ||
+		(status != "" && status != tracker.deviceStatus)
+	tracker.phase = "device_installing"
+	if percent > tracker.devicePercent {
+		tracker.devicePercent = percent
+	}
+	if status != "" {
+		tracker.deviceStatus = status
+	}
+	return advanced
+}
+
+type installActivityMonitor struct {
+	mu sync.Mutex
+
+	last time.Time
+	wake chan struct{}
+}
+
+func newInstallActivityMonitor() *installActivityMonitor {
+	return &installActivityMonitor{last: time.Now(), wake: make(chan struct{}, 1)}
+}
+
+func (monitor *installActivityMonitor) signal() {
+	monitor.mu.Lock()
+	monitor.last = time.Now()
+	monitor.mu.Unlock()
+	select {
+	case monitor.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (monitor *installActivityMonitor) lastActivity() time.Time {
+	monitor.mu.Lock()
+	defer monitor.mu.Unlock()
+	return monitor.last
+}
+
+func resetInstallTimer(timer *time.Timer, duration time.Duration) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(duration)
+}
+
+func waitForInstallResult(ctx context.Context, result <-chan error, activity *installActivityMonitor, stallTimeout time.Duration) error {
+	timer := time.NewTimer(stallTimeout)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-result:
+			return err
+		case <-activity.wake:
+			resetInstallTimer(timer, stallTimeout)
+		case <-timer.C:
+			remaining := stallTimeout - time.Since(activity.lastActivity())
+			if remaining > 0 {
+				timer.Reset(remaining)
+				continue
+			}
+			select {
+			case err := <-result:
+				return err
+			default:
+			}
+			return errInstallStalled
+		}
+	}
+}
+
+func finishInstallContextError(diagnostic *installTransferDiagnostic, err error) error {
+	result := "cancelled"
+	cause := "daemon_stop"
+	message := "installation stopped because Deploy Link is shutting down"
+	if errors.Is(err, context.DeadlineExceeded) {
+		result = "timed_out"
+		cause = "hard_safety_limit"
+		message = "installation reached its hard safety limit"
+	}
+	diagnostic.finish(result, "cancel_reason", cause)
+	return coded("install_failed", message, err)
 }
 
 func classifyTunnelError(err error) error {
@@ -113,7 +233,7 @@ func (s *Session) Done() <-chan error {
 }
 
 func (s *Session) browseUserApps(ctx context.Context) ([]installationproxy.AppInfo, error) {
-	proxy, err := installationproxy.New(s.device)
+	proxy, err := installationproxy.NewWithContext(ctx, s.device)
 	if err != nil {
 		return nil, err
 	}
@@ -136,45 +256,55 @@ func (s *Session) browseUserApps(ctx context.Context) ([]installationproxy.AppIn
 	}
 }
 
-func (s *Session) Install(ctx context.Context, app AppBundle, progress func(int, string)) error {
+func (s *Session) Install(ctx context.Context, app AppBundle, progress func(int, string), stallTimeout time.Duration) error {
 	diagnostic := newInstallTransferDiagnostic(ctx)
 	diagnostic.begin("conduit_connecting")
-	conduit, err := zipconduit.New(s.device)
+	conduit, err := zipconduit.NewWithShimConnectionContext(ctx, s.device)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return finishInstallContextError(diagnostic, ctxErr)
+		}
 		diagnostic.finish("failed", "error_code", "conduit_connect_failed")
 		return coded("install_failed", "could not connect to streaming zip conduit", err)
 	}
 	diagnostic.begin("conduit_connected")
 	installResult := make(chan error, 1)
+	activity := newInstallActivityMonitor()
+	tracker := newInstallProgressTracker()
 	go func() {
 		installResult <- conduit.SendFileWithTransferProgress(app.Path, func(percent int, status string) {
+			if tracker.deviceAdvanced(percent, status) {
+				activity.signal()
+			}
 			diagnostic.deviceProgress(percent, status)
 			if progress != nil {
 				progress(percent, status)
 			}
-		}, diagnostic.transferProgress)
+		}, func(phase string, bytesSent uint64, bytesTotal uint64) {
+			if tracker.transferAdvanced(phase, bytesSent) {
+				activity.signal()
+			}
+			diagnostic.transferProgress(phase, bytesSent, bytesTotal)
+		})
 	}()
-	select {
-	case <-ctx.Done():
-		result := "cancelled"
-		cause := "daemon_stop"
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			result = "timed_out"
-			cause = "deadline_exceeded"
-		}
-		diagnostic.finish(result, "cancel_reason", cause)
-		_ = conduit.Close()
-		return coded("install_failed", "installation timed out", ctx.Err())
-	case err := <-installResult:
-		_ = conduit.Close()
-		if err != nil {
-			diagnostic.finish("failed", "error_code", "transfer_or_device_failed")
-			return coded("install_failed", "iOS rejected or interrupted the app transfer", err)
-		}
+	err = waitForInstallResult(ctx, installResult, activity, stallTimeout)
+	_ = conduit.Close()
+	if errors.Is(err, errInstallStalled) {
+		diagnostic.finish("stalled", "cancel_reason", "no_forward_progress")
+		return coded("install_stalled", "installation stopped after making no progress", err)
+	}
+	if ctx.Err() != nil {
+		return finishInstallContextError(diagnostic, ctx.Err())
+	}
+	if err != nil {
+		diagnostic.finish("failed", "error_code", "transfer_or_device_failed")
+		return coded("install_failed", "iOS rejected or interrupted the app transfer", err)
 	}
 
 	diagnostic.readback()
-	apps, err := s.browseUserApps(ctx)
+	readbackCtx, readbackCancel := context.WithTimeout(ctx, 30*time.Second)
+	apps, err := s.browseUserApps(readbackCtx)
+	readbackCancel()
 	if err != nil {
 		diagnostic.finish("failed", "error_code", "readback_failed")
 		return coded("install_failed", "post-install InstallationProxy readback failed", err)

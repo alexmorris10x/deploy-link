@@ -61,11 +61,11 @@ It is a downstream copy based on:
 
 - source: `zjz-connect/xcode-deploy-link-deploy-beyond-local-network`;
 - commit: `66a39ee4da4ac7f6ad26c871552120ad56ead92b`;
-- version: `0.8.0`;
+- version: `0.8.1`;
 - Link Core: `danielpaulus/go-ios` at
   `3ebc297691a9e364772aef027744ebc0c49421a5`; and
 - Link Core patch SHA-256:
-  `78e96fa84ba4f15116ca5fc978c75383f2f9cacd523de02284aa3d12691663d9`.
+  `4dc515286bf1fce9df7191daf9289c55e77e7c6d73b35c9388b5bc5237a6e5ed`.
 
 The maintained downstream changes add the Tailnet connection path and bounded,
 privacy-filtered install-transfer diagnostics used to distinguish payload,
@@ -165,6 +165,14 @@ and install the signed app output:
   --profile "$profile" \
   /absolute/path/to/YourApp.app
 ```
+
+Slow public networks can take longer than five minutes. The profile's
+`install_timeout_seconds` is therefore a no-progress limit, not a total install
+limit. Payload bytes, Apple installation stages, and device percentages reset
+it. A separate hard safety limit is at least 30 minutes. If the service truly
+stalls, Deploy Link closes only that install stream and preserves the warm outer
+session. ZipConduit has no resume support, so a later retry starts from byte
+zero.
 
 An install is successful only when the command reaches `InstallComplete` and
 returns an `installed` event. Exact build confirmation is separate: read the

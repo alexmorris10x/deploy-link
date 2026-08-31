@@ -47,7 +47,7 @@ type Daemon struct {
 type sessionHandle interface {
 	Close() error
 	Done() <-chan error
-	Install(context.Context, AppBundle, func(int, string)) error
+	Install(context.Context, AppBundle, func(int, string), time.Duration) error
 }
 
 func NewDaemon(config Config, profilePath string) (*Daemon, error) {
@@ -227,7 +227,9 @@ func (d *Daemon) connectionLoop(ctx context.Context) {
 }
 
 func (d *Daemon) install(ctx context.Context, appPath string, progress func(int, string)) error {
-	validationCtx, validationCancel := context.WithTimeout(ctx, 30*time.Second)
+	installCtx, cancel := context.WithTimeout(ctx, d.config.InstallHardTimeout())
+	defer cancel()
+	validationCtx, validationCancel := context.WithTimeout(installCtx, 30*time.Second)
 	app, err := d.validateApp(validationCtx, appPath)
 	validationCancel()
 	if err != nil {
@@ -235,6 +237,9 @@ func (d *Daemon) install(ctx context.Context, appPath string, progress func(int,
 	}
 	d.operationMu.Lock()
 	defer d.operationMu.Unlock()
+	if err := installCtx.Err(); err != nil {
+		return coded("install_failed", "installation expired while waiting for the current operation", err)
+	}
 	session := d.currentSession()
 	if session == nil {
 		return coded("session_not_active", "daemon is waiting for a usable RemotePairing listener", nil)
@@ -245,10 +250,8 @@ func (d *Daemon) install(ctx context.Context, appPath string, progress func(int,
 	generation := d.generation
 	d.mu.Unlock()
 	d.setState(StateInstalling, "")
-	installCtx, cancel := context.WithTimeout(ctx, d.config.InstallTimeout())
 	installCtx = withInstallDiagnosticContext(installCtx, installAttempt, generation, time.Now())
-	err = session.Install(installCtx, app, progress)
-	cancel()
+	err = session.Install(installCtx, app, progress, d.config.InstallStallTimeout())
 	if err != nil {
 		d.setState(StateRecovering, "service_unresponsive")
 		slog.Warn("Deploy Link install service failed; retaining outer tunnel", "generation", generation, "install_attempt", installAttempt, "errorCode", errorCode(err))

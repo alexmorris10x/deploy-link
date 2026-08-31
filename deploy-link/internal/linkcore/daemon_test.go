@@ -13,7 +13,7 @@ import (
 type fakeSession struct {
 	closed  atomic.Int32
 	done    chan error
-	install func(context.Context, AppBundle, func(int, string)) error
+	install func(context.Context, AppBundle, func(int, string), time.Duration) error
 }
 
 func (s *fakeSession) Close() error {
@@ -25,9 +25,9 @@ func (s *fakeSession) Done() <-chan error {
 	return s.done
 }
 
-func (s *fakeSession) Install(ctx context.Context, app AppBundle, progress func(int, string)) error {
+func (s *fakeSession) Install(ctx context.Context, app AppBundle, progress func(int, string), stallTimeout time.Duration) error {
 	if s.install != nil {
-		return s.install(ctx, app, progress)
+		return s.install(ctx, app, progress, stallTimeout)
 	}
 	return nil
 }
@@ -245,7 +245,7 @@ func TestDaemonSerializesInstalls(t *testing.T) {
 	}
 	var running atomic.Int32
 	var maximum atomic.Int32
-	session := &fakeSession{install: func(_ context.Context, _ AppBundle, progress func(int, string)) error {
+	session := &fakeSession{install: func(_ context.Context, _ AppBundle, progress func(int, string), _ time.Duration) error {
 		current := running.Add(1)
 		for {
 			previous := maximum.Load()
@@ -280,13 +280,51 @@ func TestDaemonSerializesInstalls(t *testing.T) {
 	}
 }
 
+func TestDaemonExpiresQueuedInstallBeforeItStarts(t *testing.T) {
+	daemon := testDaemon(t)
+	validated := make(chan struct{})
+	daemon.validateApp = func(context.Context, string) (AppBundle, error) {
+		close(validated)
+		return AppBundle{Path: "/tmp/Test.app", BundleIdentifier: "one.example.test"}, nil
+	}
+	var installs atomic.Int32
+	daemon.session = &fakeSession{install: func(context.Context, AppBundle, func(int, string), time.Duration) error {
+		installs.Add(1)
+		return nil
+	}}
+	daemon.state = StateActive
+
+	daemon.operationMu.Lock()
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		result <- daemon.install(ctx, "/tmp/Test.app", func(int, string) {})
+	}()
+	<-validated
+	cancel()
+	daemon.operationMu.Unlock()
+
+	if err := <-result; errorCode(err) != "install_failed" {
+		t.Fatalf("queued install error = %v, want install_failed", err)
+	}
+	if got := installs.Load(); got != 0 {
+		t.Fatalf("install calls = %d, want 0", got)
+	}
+}
+
 func TestDaemonRetainsSessionWhenInstallServiceFails(t *testing.T) {
 	daemon := testDaemon(t)
 	daemon.validateApp = func(context.Context, string) (AppBundle, error) {
 		return AppBundle{Path: "/tmp/Test.app", BundleIdentifier: "one.example.test"}, nil
 	}
+	var observedStallTimeout time.Duration
+	var observedHardTimeout time.Duration
 	session := &fakeSession{
-		install: func(context.Context, AppBundle, func(int, string)) error {
+		install: func(ctx context.Context, _ AppBundle, _ func(int, string), stallTimeout time.Duration) error {
+			observedStallTimeout = stallTimeout
+			if deadline, ok := ctx.Deadline(); ok {
+				observedHardTimeout = time.Until(deadline)
+			}
 			return coded("install_failed", "transfer stalled", context.DeadlineExceeded)
 		},
 	}
@@ -305,6 +343,12 @@ func TestDaemonRetainsSessionWhenInstallServiceFails(t *testing.T) {
 	}
 	if daemon.currentSession() != session {
 		t.Fatal("failed install discarded the warm outer session")
+	}
+	if observedStallTimeout != 5*time.Minute {
+		t.Fatalf("stall timeout = %s, want 5m", observedStallTimeout)
+	}
+	if observedHardTimeout < 29*time.Minute || observedHardTimeout > 30*time.Minute {
+		t.Fatalf("hard timeout = %s, want about 30m", observedHardTimeout)
 	}
 }
 

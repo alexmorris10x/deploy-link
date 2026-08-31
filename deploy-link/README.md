@@ -152,6 +152,13 @@ Once the bridge is active, the iPhone may roam to 5G. Install the signed result:
   "$PWD/.build/DeployLinkDerivedData/Build/Products/Debug-iphoneos/YourApp.app"
 ```
 
+Slow public networks can take longer than five minutes. The profile's
+`install_timeout_seconds` is a no-progress limit, not a total install limit.
+Payload bytes, Apple installation stages, and device percentages reset it. A
+separate hard safety limit is at least 30 minutes. If the install stream truly
+stalls, the daemon closes only that stream and preserves the warm outer
+session. ZipConduit cannot resume, so a later retry starts from byte zero.
+
 The short-lived CLI submits the request to the persistent daemon. Success is
 reported only after streaming zip conduit completes and InstallationProxy reads
 the installed bundle back from the iPhone. Later builds reuse the same warm
@@ -327,6 +334,12 @@ bridge 激活后，iPhone 可以切换到 5G。安装已签名的构建结果：
   --profile "$profile" \
   "$PWD/.build/DeployLinkDerivedData/Build/Products/Debug-iphoneos/YourApp.app"
 ```
+
+较慢的公共网络可能需要五分钟以上。profile 中的 `install_timeout_seconds` 表示
+“持续没有进度”的限制，而不是整个安装的总时限。payload 字节、Apple 安装阶段及
+设备百分比的推进都会重置该限制；另有至少 30 分钟的硬性安全上限。若安装 stream
+确实停滞，daemon 只会关闭该 stream，并保留 warm outer session。ZipConduit 不支持
+断点续传，因此之后重试会从零开始。
 
 短生命周期 CLI 会把请求交给常驻 daemon。只有 streaming zip conduit 完成，且
 InstallationProxy 从 iPhone 回读到该 bundle 后，命令才会报告成功。之后的构建

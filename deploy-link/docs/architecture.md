@@ -1,6 +1,6 @@
 # Deploy Link Architecture
 
-Document revision: `0.8.0`
+Document revision: `0.8.1`
 
 Revised: `2026-08-31`
 
@@ -35,6 +35,16 @@ pairing material, device identifiers, or Tailnet addresses.
 Deploy Link consumes an existing signed `.app`. It does not become an Xcode Run
 Destination, select a signing team, modify a project, or weaken iOS signature
 validation.
+
+The daemon treats `install_timeout_seconds` as a rolling no-progress limit.
+Payload-byte advancement, ZipConduit phase changes, and new Apple installation
+progress reset it. Repeated callbacks do not. A separate hard safety limit is
+six times the rolling limit and never less than 30 minutes. That limit starts
+when the daemon accepts the request, so it also bounds time spent behind another
+operation. The CLI allows the maximum valid daemon window plus a response
+margin, which prevents profile changes from ending the client first. A true
+stall closes only the per-install ZipConduit service; the trusted outer session
+remains available for an explicit retry.
 
 ## Session lifecycle
 
