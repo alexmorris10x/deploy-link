@@ -8,4 +8,5 @@ repository_root="$(cd "${script_directory}/.." && pwd -P)"
 : "${HOME:?HOME must be set}"
 export DEPLOY_LINK_RUNTIME_ROOT="${DEPLOY_LINK_RUNTIME_ROOT:-${HOME}/.local/share/deploy-link}"
 
-exec "${repository_root}/deploy-link/scripts/install.sh"
+"${repository_root}/deploy-link/scripts/install.sh"
+exec "${script_directory}/install_deploy_link_status.sh"

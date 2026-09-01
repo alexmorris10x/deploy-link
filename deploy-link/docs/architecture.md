@@ -1,6 +1,6 @@
 # Deploy Link Architecture
 
-Document revision: `0.8.1`
+Document revision: `0.9.0`
 
 Revised: `2026-08-31`
 
@@ -29,6 +29,8 @@ pairing material, device identifiers, or Tailnet addresses.
 | Bridge reachability | Tailscale plus the configured iOS device Tailnet IP |
 | Pair verification | The configured owner-only RemotePairing record |
 | Warm session | The long-running Deploy Link daemon |
+| Unattended job dispatch | A profile-scoped, one-shot LaunchAgent |
+| Unattended job state and transfer | The long-running Deploy Link daemon |
 | App transfer | Streaming zip conduit over the live RSD session |
 | Success readback | InstallationProxy bundle enumeration |
 
@@ -45,6 +47,48 @@ operation. The CLI allows the maximum valid daemon window plus a response
 margin, which prevents profile changes from ending the client first. A true
 stall closes only the per-install ZipConduit service; the trusted outer session
 remains available for an explicit retry.
+
+## Unattended install jobs
+
+An unattended job separates the lifetime of the install from the lifetime of
+the submitting CLI or agent. Submission validates the signed `.app`, copies it
+to an owner-only snapshot, records its full content SHA-256 digest in a durable receipt, and starts a
+profile-scoped one-shot LaunchAgent. The trigger uses `RunAtLoad` and does not
+use `KeepAlive`, so launchd dispatches it without turning a failure into an
+automatic retry. Once the receipt changes atomically from `queued` to
+`running`, the persistent daemon owns the transfer and receipt. Client output
+is best-effort and is not part of the success proof.
+
+```text
+queued -> running -> installed
+                  -> failed
+                  -> interrupted
+```
+
+The receipt is the public job state. `status` reads it once, and `wait` follows
+it until a terminal state. The submitting caller can disconnect immediately
+after receiving the job ID. The private snapshot and receipt remain until an
+explicit `remove` cleans a terminal job.
+
+Each profile allows one active job and has no queue. A second submission is
+rejected while the first receipt is `queued` or `running`. Failed and
+interrupted jobs never retry automatically. A later transfer requires an
+explicit new submission because ZipConduit cannot resume an earlier payload.
+
+Submission records a random daemon instance ID, the session generation, and
+the install-count baseline. Before the daemon claims a queued job, it verifies
+the snapshot's bundle identifier, version, build, and content digest against
+the receipt. A job may enter `installed` only when the instance
+ID and generation remain unchanged, the install count advances by exactly one,
+and InstallationProxy reads back the exact bundle identifier, version, and
+build. A missing condition cannot be inferred from payload completion or
+response delivery.
+
+The macOS host must remain awake and reachable, and the profile's warm Deploy
+Link session must remain available. The one-shot trigger survives its
+submitting terminal or agent, and the daemon survives loss of the trigger after
+acceptance. Neither can preserve an Apple session through Mac shutdown or
+continue an interrupted transfer.
 
 ## Session lifecycle
 
@@ -129,6 +173,9 @@ Git under `~/.local/share/deploy-link/`.
 - The RSD-reported identifier must match the configured RemotePairing identifier.
 - Install requests are serialized and accept only an existing, code-signed
   `.app` directory.
-- Success requires post-install bundle readback.
+- Unattended jobs keep their immutable app snapshot, receipt, worker output,
+  and LaunchAgent definition owner-only until explicit terminal-job removal.
+- Success requires post-install readback of the exact bundle identifier,
+  version, and build.
 - No command changes Tailscale ACLs, enables Developer Mode, edits Apple's USB
   pairing database, republishes Bonjour, or falls back to TestFlight.

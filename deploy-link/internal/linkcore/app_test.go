@@ -24,7 +24,8 @@ func TestValidateAppAcceptsSignedBundle(t *testing.T) {
 <key>CFBundleExecutable</key><string>DeployLinkTest</string>
 <key>CFBundleIdentifier</key><string>one.zjz.deploy-link-test</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleVersion</key><string>1</string>
+<key>CFBundleShortVersionString</key><string>1.2.3</string>
+<key>CFBundleVersion</key><string>456</string>
 </dict></plist>`)
 	if err := os.WriteFile(filepath.Join(appPath, "Info.plist"), infoPlist, 0o644); err != nil {
 		t.Fatal(err)
@@ -40,7 +41,7 @@ func TestValidateAppAcceptsSignedBundle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bundle.BundleIdentifier != "one.zjz.deploy-link-test" || bundle.Path != appPath {
+	if bundle.BundleIdentifier != "one.zjz.deploy-link-test" || bundle.Version != "1.2.3" || bundle.Build != "456" || bundle.Path != appPath {
 		t.Fatalf("bundle = %#v", bundle)
 	}
 }

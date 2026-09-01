@@ -256,7 +256,29 @@ func (s *Session) browseUserApps(ctx context.Context) ([]installationproxy.AppIn
 	}
 }
 
-func (s *Session) Install(ctx context.Context, app AppBundle, progress func(int, string), stallTimeout time.Duration) error {
+func verifyInstallReadback(expected AppBundle, apps []installationproxy.AppInfo) (string, error) {
+	bundleFound := false
+	for _, installed := range apps {
+		if installed.CFBundleIdentifier() != expected.BundleIdentifier {
+			continue
+		}
+		bundleFound = true
+		if expected.Version != "" && installed.CFBundleShortVersionString() != expected.Version {
+			continue
+		}
+		installedBuild, _ := installed[installationproxy.CFBundleVersion].(string)
+		if expected.Build != "" && installedBuild != expected.Build {
+			continue
+		}
+		return "", nil
+	}
+	if bundleFound {
+		return "readback_identity_mismatch", coded("install_failed", "installed app version or build did not match the requested artifact", errors.New("installed app identity mismatch"))
+	}
+	return "readback_missing", coded("install_failed", "installed bundle was absent from InstallationProxy readback", errors.New(expected.BundleIdentifier))
+}
+
+func (s *Session) Install(ctx context.Context, app AppBundle, progress func(int, string), transferProgress func(string, uint64, uint64), stallTimeout time.Duration) error {
 	diagnostic := newInstallTransferDiagnostic(ctx)
 	diagnostic.begin("conduit_connecting")
 	conduit, err := zipconduit.NewWithShimConnectionContext(ctx, s.device)
@@ -271,6 +293,8 @@ func (s *Session) Install(ctx context.Context, app AppBundle, progress func(int,
 	installResult := make(chan error, 1)
 	activity := newInstallActivityMonitor()
 	tracker := newInstallProgressTracker()
+	var lastBytesSent uint64
+	var lastBytesTotal uint64
 	go func() {
 		installResult <- conduit.SendFileWithTransferProgress(app.Path, func(percent int, status string) {
 			if tracker.deviceAdvanced(percent, status) {
@@ -281,10 +305,16 @@ func (s *Session) Install(ctx context.Context, app AppBundle, progress func(int,
 				progress(percent, status)
 			}
 		}, func(phase string, bytesSent uint64, bytesTotal uint64) {
-			if tracker.transferAdvanced(phase, bytesSent) {
+			advanced := tracker.transferAdvanced(phase, bytesSent)
+			if advanced {
 				activity.signal()
 			}
+			lastBytesSent = bytesSent
+			lastBytesTotal = bytesTotal
 			diagnostic.transferProgress(phase, bytesSent, bytesTotal)
+			if advanced && transferProgress != nil {
+				transferProgress(phase, bytesSent, bytesTotal)
+			}
 		})
 	}()
 	err = waitForInstallResult(ctx, installResult, activity, stallTimeout)
@@ -302,6 +332,9 @@ func (s *Session) Install(ctx context.Context, app AppBundle, progress func(int,
 	}
 
 	diagnostic.readback()
+	if transferProgress != nil {
+		transferProgress("readback", lastBytesSent, lastBytesTotal)
+	}
 	readbackCtx, readbackCancel := context.WithTimeout(ctx, 30*time.Second)
 	apps, err := s.browseUserApps(readbackCtx)
 	readbackCancel()
@@ -309,14 +342,13 @@ func (s *Session) Install(ctx context.Context, app AppBundle, progress func(int,
 		diagnostic.finish("failed", "error_code", "readback_failed")
 		return coded("install_failed", "post-install InstallationProxy readback failed", err)
 	}
-	for _, installed := range apps {
-		if installed.CFBundleIdentifier() == app.BundleIdentifier {
-			diagnostic.finish("completed", "", "")
-			return nil
-		}
+	readbackCode, err := verifyInstallReadback(app, apps)
+	if err != nil {
+		diagnostic.finish("failed", "error_code", readbackCode)
+		return err
 	}
-	diagnostic.finish("failed", "error_code", "readback_missing")
-	return coded("install_failed", "installed bundle was absent from InstallationProxy readback", errors.New(app.BundleIdentifier))
+	diagnostic.finish("completed", "", "")
+	return nil
 }
 
 func (s *Session) String() string {

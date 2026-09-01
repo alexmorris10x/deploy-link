@@ -9,6 +9,7 @@ type statusReader func(context.Context) (Response, error)
 
 type watchSignature struct {
 	state         string
+	daemonID      string
 	generation    uint64
 	sessionLosses uint64
 	installCount  uint64
@@ -87,6 +88,7 @@ func watchStatus(ctx context.Context, interval time.Duration, read statusReader,
 
 		signature := watchSignature{
 			state:         response.State,
+			daemonID:      response.DaemonID,
 			generation:    response.Generation,
 			sessionLosses: response.SessionLosses,
 			installCount:  response.InstallCount,

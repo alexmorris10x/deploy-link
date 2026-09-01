@@ -164,8 +164,44 @@ session. ZipConduit cannot resume, so a later retry starts from byte zero.
 
 The short-lived CLI submits the request to the persistent daemon. Success is
 reported only after streaming zip conduit completes and InstallationProxy reads
-the installed bundle back from the device. Later builds reuse the same warm
-generation.
+back the same bundle identifier, version, and build from the device. Later
+builds reuse the same warm generation.
+
+### 6. Submit an unattended install
+
+Use an install job when the terminal or agent should be free after submission.
+`submit` validates the signed app, makes a private snapshot, records its full
+content SHA-256 digest, and starts a macOS-owned one-shot LaunchAgent. The command returns a job ID, and
+the one-shot process dispatches the job to the persistent daemon. The caller
+can then disconnect without owning the transfer.
+
+```sh
+"$deploy_link" job submit --profile "$profile" /absolute/path/to/YourApp.app
+"$deploy_link" job status --profile "$profile" <job-id>
+"$deploy_link" job wait --profile "$profile" <job-id>
+"$deploy_link" job remove --profile "$profile" <job-id>
+```
+
+`status` reads the durable receipt. `wait` follows it until the state becomes
+`installed`, `failed`, or `interrupted`. A receipt can also show `queued` or
+`running`. A profile can have only one active job. Deploy Link rejects another
+submission instead of creating a queue.
+
+The one-shot trigger uses `RunAtLoad` without `KeepAlive`. After the daemon
+durably changes `queued` to `running`, the daemon owns the transfer and receipt
+even if the trigger disconnects. It never retries a failed or interrupted
+transfer. Before it claims the job, the daemon verifies the snapshot's bundle
+identity, version, build, and content digest against the submitted receipt.
+`installed` is written only after the random daemon instance ID and
+session generation remain unchanged, the install count advances by exactly
+one, and InstallationProxy reads back the exact bundle identifier, version,
+and build.
+
+The private snapshot and receipt remain until `remove` cleans the terminal job.
+The Mac must stay awake and reachable, and the warm profile session must remain
+available while the job runs. The job is independent of the submitting caller.
+A running transfer cannot continue through loss of the Apple session or a Mac
+shutdown.
 
 Useful commands:
 
@@ -348,8 +384,38 @@ bridge 激活后，已配对的设备可以留在不同的 Wi-Fi 网络，iPhone
 断点续传，因此之后重试会从零开始。
 
 短生命周期 CLI 会把请求交给常驻 daemon。只有 streaming zip conduit 完成，且
-InstallationProxy 从设备回读到该 bundle 后，命令才会报告成功。之后的构建
-会复用同一个 warm generation。
+InstallationProxy 从设备回读到相同的 bundle identifier、version 和 build 后，
+命令才会报告成功。之后的构建会复用同一个 warm generation。
+
+### 6. 提交无人值守安装
+
+如果希望提交后释放 terminal 或 agent，请使用 install job。`submit` 会验证已签名
+App，制作仅限当前用户访问的 snapshot，记录完整内容的 SHA-256 digest，启动一个由 macOS 管理的一次性
+LaunchAgent，并返回 job ID。之后 caller 即使断开，也不会中断该传输。
+
+```sh
+"$deploy_link" job submit --profile "$profile" /absolute/path/to/YourApp.app
+"$deploy_link" job status --profile "$profile" <job-id>
+"$deploy_link" job wait --profile "$profile" <job-id>
+"$deploy_link" job remove --profile "$profile" <job-id>
+```
+
+`status` 读取持久 receipt。`wait` 会持续读取，直到状态变为 `installed`、
+`failed` 或 `interrupted`。receipt 也可能显示 `queued` 或 `running`。每个 profile
+只能有一个 active job；Deploy Link 会拒绝第二个提交，不会建立 queue。
+
+一次性 trigger 使用 `RunAtLoad`，但不使用 `KeepAlive`。daemon 将 receipt 从
+`queued` 持久写为 `running` 后，即使 trigger 断开，daemon 仍会负责传输和
+receipt。失败或中断后不会自动重试。只有随机 daemon instance ID 和 session
+generation 都没有变化、install count 恰好增加一，并且 InstallationProxy 回读到
+完全相同的 bundle identifier、version 和 build，receipt 才会写入 `installed`。
+daemon 在接管 job 前，也会验证 snapshot 的 bundle identity、version、build 和
+content digest 都与提交时的 receipt 相同。
+
+private snapshot 和 receipt 会一直保留，直到对 terminal job 明确执行 `remove`。
+job 运行期间，Mac 必须保持唤醒并可访问，profile 的 warm session 也必须保持
+可用。job 不依赖提交它的 caller，但正在运行的传输无法跨越 Apple session 丢失
+或 Mac 关机。
 
 常用命令：
 

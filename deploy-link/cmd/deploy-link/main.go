@@ -173,6 +173,79 @@ func watch(arguments []string) error {
 	return linkcore.Watch(ctx, *profile, *interval, func(response linkcore.Response) { emit(response) })
 }
 
+func job(arguments []string) error {
+	if len(arguments) == 0 {
+		return errors.New("job requires submit, status, wait, ui, remove, or run")
+	}
+	action := arguments[0]
+	flags := flag.NewFlagSet("job "+action, flag.ContinueOnError)
+	profile := flags.String("profile", "", "absolute profile path")
+	interval := flags.Duration("interval", time.Second, "job polling interval")
+	if err := flags.Parse(arguments[1:]); err != nil {
+		return err
+	}
+	if err := required(*profile, "--profile"); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return fmt.Errorf("job %s requires exactly one argument", action)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	switch action {
+	case "submit":
+		appPath, err := filepath.Abs(flags.Arg(0))
+		if err != nil {
+			return err
+		}
+		binaryPath, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		binaryPath, err = filepath.EvalSymlinks(binaryPath)
+		if err != nil {
+			return err
+		}
+		installJob, err := linkcore.SubmitInstallJob(ctx, binaryPath, *profile, appPath)
+		if err != nil {
+			if installJob.ID != "" {
+				emit(map[string]any{"ok": false, "event": "job_submission_failed", "job": installJob})
+			}
+			return err
+		}
+		emit(map[string]any{"ok": true, "event": "job_submitted", "job": installJob})
+		return nil
+	case "status":
+		installJob, err := linkcore.ReadInstallJob(*profile, flags.Arg(0))
+		if err != nil {
+			return err
+		}
+		emit(map[string]any{"ok": true, "event": "job_status", "job": installJob})
+		return nil
+	case "wait":
+		_, err := linkcore.WaitInstallJob(ctx, *profile, flags.Arg(0), *interval, func(installJob linkcore.InstallJob) {
+			emit(map[string]any{"ok": true, "event": "job_status", "job": installJob})
+		})
+		return err
+	case "ui":
+		return runJobUI(ctx, *profile, flags.Arg(0))
+	case "remove":
+		if err := linkcore.RemoveInstallJob(*profile, flags.Arg(0)); err != nil {
+			return err
+		}
+		emit(map[string]any{"ok": true, "event": "job_removed", "job_id": flags.Arg(0)})
+		return nil
+	case "run":
+		installJob, err := linkcore.RunInstallJob(ctx, *profile, flags.Arg(0), nil)
+		if installJob.ID != "" {
+			emit(map[string]any{"ok": err == nil, "event": "job_worker_finished", "job": installJob})
+		}
+		return err
+	default:
+		return errors.New("job requires submit, status, wait, ui, remove, or run")
+	}
+}
+
 func launchAgent(arguments []string) error {
 	if len(arguments) == 0 {
 		return errors.New("launch-agent requires install or remove")
@@ -213,7 +286,7 @@ func launchAgent(arguments []string) error {
 
 func run(arguments []string) error {
 	if len(arguments) == 0 {
-		return errors.New("command required: configure, doctor, serve, supervise, status, watch, install, stop, launch-agent, version")
+		return errors.New("command required: configure, doctor, serve, supervise, status, watch, install, job, stop, launch-agent, version")
 	}
 	switch arguments[0] {
 	case "configure":
@@ -228,6 +301,8 @@ func run(arguments []string) error {
 		return call(arguments[1:], arguments[0])
 	case "watch":
 		return watch(arguments[1:])
+	case "job":
+		return job(arguments[1:])
 	case "launch-agent":
 		return launchAgent(arguments[1:])
 	case "version":

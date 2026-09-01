@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -25,9 +26,11 @@ type Daemon struct {
 	config       Config
 	profilePath  string
 	socketPath   string
+	daemonID     string
 	openSession  func(context.Context, Config) (sessionHandle, error)
 	discoverPort func(context.Context, Config) (int, error)
 	validateApp  func(context.Context, string) (AppBundle, error)
+	writeJob     func(string, InstallJob) error
 	now          func() time.Time
 
 	mu              sync.RWMutex
@@ -47,7 +50,7 @@ type Daemon struct {
 type sessionHandle interface {
 	Close() error
 	Done() <-chan error
-	Install(context.Context, AppBundle, func(int, string), time.Duration) error
+	Install(context.Context, AppBundle, func(int, string), func(string, uint64, uint64), time.Duration) error
 }
 
 func NewDaemon(config Config, profilePath string) (*Daemon, error) {
@@ -55,16 +58,22 @@ func NewDaemon(config Config, profilePath string) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
+	daemonID, err := newInstallJobID()
+	if err != nil {
+		return nil, coded("daemon_create_failed", "could not create the daemon session identifier", err)
+	}
 	return &Daemon{
 		config:      config,
 		profilePath: profilePath,
 		socketPath:  socketPath,
+		daemonID:    daemonID,
 		state:       StateWaiting,
 		openSession: func(ctx context.Context, config Config) (sessionHandle, error) {
 			return OpenSession(ctx, config)
 		},
 		discoverPort: discoverRemotePairingPort,
 		validateApp:  ValidateApp,
+		writeJob:     writeInstallJob,
 		now:          time.Now,
 	}, nil
 }
@@ -74,6 +83,7 @@ func (d *Daemon) Snapshot() Snapshot {
 	defer d.mu.RUnlock()
 	return Snapshot{
 		State:         d.state,
+		DaemonID:      d.daemonID,
 		Generation:    d.generation,
 		SessionLosses: d.sessionLosses,
 		InstallCount:  d.installCount,
@@ -227,10 +237,14 @@ func (d *Daemon) connectionLoop(ctx context.Context) {
 }
 
 func (d *Daemon) install(ctx context.Context, appPath string, progress func(int, string)) error {
+	return d.installRequest(ctx, Request{Command: "install", AppPath: appPath}, nil, progress)
+}
+
+func (d *Daemon) installRequest(ctx context.Context, request Request, accepted func(), progress func(int, string)) error {
 	installCtx, cancel := context.WithTimeout(ctx, d.config.InstallHardTimeout())
 	defer cancel()
 	validationCtx, validationCancel := context.WithTimeout(installCtx, 30*time.Second)
-	app, err := d.validateApp(validationCtx, appPath)
+	app, err := d.validateApp(validationCtx, request.AppPath)
 	validationCancel()
 	if err != nil {
 		return err
@@ -240,9 +254,24 @@ func (d *Daemon) install(ctx context.Context, appPath string, progress func(int,
 	if err := installCtx.Err(); err != nil {
 		return coded("install_failed", "installation expired while waiting for the current operation", err)
 	}
+	job, err := d.validateInstallOwnership(installCtx, request, app)
+	if err != nil {
+		return err
+	}
+	if job != nil {
+		claimed, err := claimInstallJob(d.profilePath, job.ID, d.Snapshot())
+		if err != nil {
+			return err
+		}
+		job = &claimed
+	}
 	session := d.currentSession()
 	if session == nil {
-		return coded("session_not_active", "daemon is waiting for a usable RemotePairing listener", nil)
+		err := coded("session_not_active", "daemon is waiting for a usable RemotePairing listener", nil)
+		if job != nil {
+			_, err = markInstallJobTerminal(d.profilePath, *job, InstallJobStateInterrupted, err)
+		}
+		return err
 	}
 	d.mu.Lock()
 	d.installAttempts++
@@ -250,11 +279,95 @@ func (d *Daemon) install(ctx context.Context, appPath string, progress func(int,
 	generation := d.generation
 	d.mu.Unlock()
 	d.setState(StateInstalling, "")
+	if accepted != nil {
+		accepted()
+	}
 	installCtx = withInstallDiagnosticContext(installCtx, installAttempt, generation, time.Now())
-	err = session.Install(installCtx, app, progress, d.config.InstallStallTimeout())
+	var receiptWriteError error
+	var lastReceiptWrite time.Time
+	writeProgress := func(next InstallJobProgress, force bool) {
+		if job == nil || receiptWriteError != nil {
+			return
+		}
+		now := time.Now().UTC()
+		if !force && !lastReceiptWrite.IsZero() && now.Sub(lastReceiptWrite) < time.Second {
+			return
+		}
+		updated := *job
+		updated.Progress = next
+		updated.UpdatedAt = now
+		receiptWriteError = d.writeJob(d.profilePath, updated)
+		if receiptWriteError != nil {
+			cancel()
+			return
+		}
+		*job = updated
+		lastReceiptWrite = now
+	}
+	reportTransferProgress := func(phase string, bytesSent uint64, bytesTotal uint64) {
+		if job == nil || receiptWriteError != nil {
+			return
+		}
+		current := job.Progress
+		advanced := phase != current.Phase || bytesSent > current.BytesSent
+		if !advanced {
+			return
+		}
+		percent := 0
+		if bytesTotal > 0 {
+			percent = int(bytesSent * 90 / bytesTotal)
+			if percent > 90 {
+				percent = 90
+			}
+		}
+		status := "Transferring app"
+		if phase == "payload_complete" || phase == "awaiting_device_progress" {
+			percent = 90
+			status = "Waiting for device"
+		} else if phase == "readback" {
+			percent = 99
+			status = "Verifying installed app"
+		}
+		writeProgress(InstallJobProgress{
+			Percent:    percent,
+			Status:     status,
+			Phase:      phase,
+			BytesSent:  bytesSent,
+			BytesTotal: bytesTotal,
+		}, phase != current.Phase || (bytesTotal > 0 && bytesSent >= bytesTotal))
+	}
+	reportProgress := func(percent int, status string) {
+		if job != nil {
+			overallPercent := 90 + percent*9/100
+			if overallPercent > 99 {
+				overallPercent = 99
+			}
+			writeProgress(InstallJobProgress{
+				Percent:    overallPercent,
+				Status:     status,
+				Phase:      "device_installing",
+				BytesSent:  job.Progress.BytesSent,
+				BytesTotal: job.Progress.BytesTotal,
+			}, true)
+		}
+		if progress != nil {
+			progress(percent, status)
+		}
+	}
+	err = session.Install(installCtx, app, reportProgress, reportTransferProgress, d.config.InstallStallTimeout())
+	if receiptWriteError != nil {
+		err = receiptWriteError
+	}
 	if err != nil {
 		d.setState(StateRecovering, "service_unresponsive")
 		slog.Warn("Deploy Link install service failed; retaining outer tunnel", "generation", generation, "install_attempt", installAttempt, "errorCode", errorCode(err))
+		if job != nil {
+			state := InstallJobStateFailed
+			if ctx.Err() != nil {
+				state = InstallJobStateInterrupted
+			}
+			_, err = markInstallJobTerminal(d.profilePath, *job, state, err)
+		}
 		return err
 	}
 	d.mu.Lock()
@@ -262,7 +375,57 @@ func (d *Daemon) install(ctx context.Context, appPath string, progress func(int,
 	d.state = StateActive
 	d.lastErrorCode = ""
 	d.mu.Unlock()
+	if job != nil {
+		snapshot := d.Snapshot()
+		if snapshot.DaemonID != job.Baseline.DaemonID || snapshot.Generation != job.Baseline.Generation || snapshot.InstallCount != job.Baseline.InstallCount+1 {
+			_, err := markInstallJobTerminal(d.profilePath, *job, InstallJobStateFailed,
+				coded("job_proof_failed", "install completion counters did not match the submitted job", nil))
+			return err
+		}
+		job.Progress.Percent = 100
+		job.Progress.Status = "InstallComplete"
+		job.Progress.Phase = "installed"
+		job.Result = &InstallJobResult{Event: "installed", DaemonID: snapshot.DaemonID, Generation: snapshot.Generation, InstallCount: snapshot.InstallCount}
+		_, err := markInstallJobTerminal(d.profilePath, *job, InstallJobStateInstalled, nil)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func (d *Daemon) validateInstallOwnership(ctx context.Context, request Request, app AppBundle) (*InstallJob, error) {
+	active, found, err := activeInstallJob(d.profilePath)
+	if err != nil {
+		return nil, err
+	}
+	if request.JobID == "" {
+		if found {
+			return nil, coded("job_active", "this profile has an active unattended install job", nil)
+		}
+		return nil, nil
+	}
+	if !found || active.ID != request.JobID || active.State != InstallJobStateQueued {
+		return nil, coded("job_invalid", "install request does not own the queued install job", nil)
+	}
+	expectedPath, err := installJobArtifactPath(d.profilePath, request.JobID)
+	if err != nil {
+		return nil, err
+	}
+	if filepath.Clean(request.AppPath) != filepath.Clean(expectedPath) {
+		return nil, coded("job_invalid", "install job requested a different app snapshot", nil)
+	}
+	if app.BundleIdentifier != active.Artifact.BundleIdentifier || app.Version != active.Artifact.Version || app.Build != active.Artifact.Build {
+		return nil, coded("job_snapshot_changed", "install job app identity no longer matches its receipt", nil)
+	}
+	digest, err := digestInstallJobArtifact(ctx, expectedPath)
+	if err != nil {
+		return nil, err
+	}
+	if digest != active.Artifact.ContentSHA256 {
+		return nil, coded("job_snapshot_changed", "install job app contents no longer match its receipt", nil)
+	}
+	return &active, nil
 }
 
 func (d *Daemon) handleConnection(ctx context.Context, connection net.Conn) {
@@ -276,19 +439,20 @@ func (d *Daemon) handleConnection(ctx context.Context, connection net.Conn) {
 		_ = writeOneResponse(connection, errorResponse(err))
 		return
 	}
-	encoder := &safeEncoder{encoder: jsonEncoder(connection)}
+	encoder := &safeEncoder{connection: connection, encoder: jsonEncoder(connection)}
 	switch request.Command {
 	case "status":
 		_ = encoder.Encode(snapshotResponse(d.Snapshot()))
 	case "stop":
-		_ = encoder.Encode(Response{OK: true, Final: true, Event: "stopping", State: StateStopping})
+		_ = encoder.Encode(Response{OK: true, Final: true, ControlSchema: ControlSchemaVersion, Event: "stopping", State: StateStopping})
 		if d.cancel != nil {
 			d.cancel()
 		}
 	case "install":
-		_ = encoder.Encode(Response{OK: true, Final: false, Event: "accepted", State: d.Snapshot().State})
-		err := d.install(ctx, request.AppPath, func(percent int, status string) {
-			_ = encoder.Encode(Response{OK: true, Final: false, Event: "progress", Percent: percent, Status: status})
+		err := d.installRequest(ctx, request, func() {
+			_ = encoder.Encode(Response{OK: true, Final: false, ControlSchema: ControlSchemaVersion, Event: "accepted", State: d.Snapshot().State})
+		}, func(percent int, status string) {
+			_ = encoder.Encode(Response{OK: true, Final: false, ControlSchema: ControlSchemaVersion, Event: "progress", Percent: percent, Status: status})
 		})
 		if err != nil {
 			_ = encoder.Encode(errorResponse(err))
@@ -296,12 +460,14 @@ func (d *Daemon) handleConnection(ctx context.Context, connection net.Conn) {
 		}
 		snapshot := d.Snapshot()
 		_ = encoder.Encode(Response{
-			OK:           true,
-			Final:        true,
-			Event:        "installed",
-			State:        snapshot.State,
-			Generation:   snapshot.Generation,
-			InstallCount: snapshot.InstallCount,
+			OK:            true,
+			Final:         true,
+			ControlSchema: ControlSchemaVersion,
+			Event:         "installed",
+			State:         snapshot.State,
+			DaemonID:      snapshot.DaemonID,
+			Generation:    snapshot.Generation,
+			InstallCount:  snapshot.InstallCount,
 		})
 	}
 }
@@ -332,6 +498,9 @@ func (d *Daemon) Serve(parent context.Context) error {
 		return err
 	}
 	defer forwardLock.Close()
+	if err := reconcileRunningInstallJob(d.profilePath); err != nil {
+		return err
+	}
 	listener, err := prepareUnixListener(d.socketPath)
 	if err != nil {
 		return err

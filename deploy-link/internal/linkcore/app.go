@@ -14,10 +14,14 @@ import (
 type AppBundle struct {
 	Path             string
 	BundleIdentifier string
+	Version          string
+	Build            string
 }
 
 type appInfoPlist struct {
 	BundleIdentifier string `plist:"CFBundleIdentifier"`
+	Version          string `plist:"CFBundleShortVersionString"`
+	Build            string `plist:"CFBundleVersion"`
 }
 
 func ValidateApp(ctx context.Context, path string) (AppBundle, error) {
@@ -41,5 +45,10 @@ func ValidateApp(ctx context.Context, path string) (AppBundle, error) {
 	if output, err := command.CombinedOutput(); err != nil {
 		return AppBundle{}, coded("app_invalid", fmt.Sprintf("code signature verification failed (%d bytes of diagnostic output)", len(output)), err)
 	}
-	return AppBundle{Path: absolute, BundleIdentifier: appInfo.BundleIdentifier}, nil
+	return AppBundle{
+		Path:             absolute,
+		BundleIdentifier: appInfo.BundleIdentifier,
+		Version:          appInfo.Version,
+		Build:            appInfo.Build,
+	}, nil
 }

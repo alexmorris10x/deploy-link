@@ -5,7 +5,107 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/danielpaulus/go-ios/ios/installationproxy"
 )
+
+func TestVerifyInstallReadbackRequiresExpectedIdentity(t *testing.T) {
+	expected := AppBundle{
+		BundleIdentifier: "one.example.test",
+		Version:          "1.2.3",
+		Build:            "456",
+	}
+	tests := []struct {
+		name           string
+		apps           []installationproxy.AppInfo
+		diagnosticCode string
+		wantError      bool
+	}{
+		{
+			name: "exact identity",
+			apps: []installationproxy.AppInfo{{
+				installationproxy.CFBundleIdentifier:         "one.example.test",
+				installationproxy.CFBundleShortVersionString: "1.2.3",
+				installationproxy.CFBundleVersion:            "456",
+			}},
+		},
+		{
+			name: "wrong version",
+			apps: []installationproxy.AppInfo{{
+				installationproxy.CFBundleIdentifier:         "one.example.test",
+				installationproxy.CFBundleShortVersionString: "1.2.2",
+				installationproxy.CFBundleVersion:            "456",
+			}},
+			diagnosticCode: "readback_identity_mismatch",
+			wantError:      true,
+		},
+		{
+			name: "wrong build",
+			apps: []installationproxy.AppInfo{{
+				installationproxy.CFBundleIdentifier:         "one.example.test",
+				installationproxy.CFBundleShortVersionString: "1.2.3",
+				installationproxy.CFBundleVersion:            "455",
+			}},
+			diagnosticCode: "readback_identity_mismatch",
+			wantError:      true,
+		},
+		{
+			name: "missing version",
+			apps: []installationproxy.AppInfo{{
+				installationproxy.CFBundleIdentifier: "one.example.test",
+				installationproxy.CFBundleVersion:    "456",
+			}},
+			diagnosticCode: "readback_identity_mismatch",
+			wantError:      true,
+		},
+		{
+			name: "missing build",
+			apps: []installationproxy.AppInfo{{
+				installationproxy.CFBundleIdentifier:         "one.example.test",
+				installationproxy.CFBundleShortVersionString: "1.2.3",
+			}},
+			diagnosticCode: "readback_identity_mismatch",
+			wantError:      true,
+		},
+		{
+			name: "bundle absent",
+			apps: []installationproxy.AppInfo{{
+				installationproxy.CFBundleIdentifier:         "one.example.other",
+				installationproxy.CFBundleShortVersionString: "1.2.3",
+				installationproxy.CFBundleVersion:            "456",
+			}},
+			diagnosticCode: "readback_missing",
+			wantError:      true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			diagnosticCode, err := verifyInstallReadback(expected, test.apps)
+			if diagnosticCode != test.diagnosticCode {
+				t.Fatalf("diagnostic code = %q, want %q", diagnosticCode, test.diagnosticCode)
+			}
+			if test.wantError {
+				if errorCode(err) != "install_failed" {
+					t.Fatalf("error = %v, want coded install_failed", err)
+				}
+			} else if err != nil {
+				t.Fatalf("error = %v, want nil", err)
+			}
+		})
+	}
+}
+
+func TestVerifyInstallReadbackKeepsBundleOnlyCompatibility(t *testing.T) {
+	expected := AppBundle{BundleIdentifier: "one.example.test"}
+	apps := []installationproxy.AppInfo{{
+		installationproxy.CFBundleIdentifier: "one.example.test",
+	}}
+	diagnosticCode, err := verifyInstallReadback(expected, apps)
+	if diagnosticCode != "" || err != nil {
+		t.Fatalf("diagnostic code = %q error = %v, want bundle-only match", diagnosticCode, err)
+	}
+}
 
 func TestInstallProgressTrackerIgnoresDuplicateCallbacks(t *testing.T) {
 	tracker := newInstallProgressTracker()

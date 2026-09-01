@@ -75,15 +75,15 @@ It is a downstream copy based on:
 
 - source: `zjz-connect/xcode-deploy-link-deploy-beyond-local-network`;
 - commit: `66a39ee4da4ac7f6ad26c871552120ad56ead92b`;
-- version: `0.8.1`;
+- version: `0.9.0`;
 - Link Core: `danielpaulus/go-ios` at
   `3ebc297691a9e364772aef027744ebc0c49421a5`; and
 - Link Core patch SHA-256:
   `4dc515286bf1fce9df7191daf9289c55e77e7c6d73b35c9388b5bc5237a6e5ed`.
 
-The maintained downstream changes add the Tailnet connection path and bounded,
-privacy-filtered install-transfer diagnostics used to distinguish payload,
-device-install, and readback progress. They do not add a remote control API.
+The maintained downstream changes add the Tailnet connection path, bounded
+privacy-filtered install diagnostics, and profile-scoped unattended install
+jobs with durable local receipts. They do not add a remote control API.
 
 See [`deploy-link/UPSTREAM.md`](deploy-link/UPSTREAM.md) and the included license
 files. Profiles, pairing records, logs, binaries, toolchains, and build caches
@@ -190,10 +190,49 @@ stalls, Deploy Link closes only that install stream and preserves the warm outer
 session. ZipConduit has no resume support, so a later retry starts from byte
 zero.
 
-An install is successful only when the command reaches `InstallComplete` and
-returns an `installed` event. Exact build confirmation is separate: read the
-visible Version and Build rows in the app, or use device readback after Apple
-CoreDevice becomes available again.
+An install is successful only when the command reaches `InstallComplete`, then
+InstallationProxy reads back the same bundle identifier, version, and build
+from the device. Deploy Link then returns an `installed` event. Opening the app
+and checking its runtime behavior remains a separate test.
+
+## Submit an unattended install
+
+Use an install job when the terminal or agent should be free after submission.
+`submit` validates the signed app, makes a private snapshot, records its full
+content SHA-256 digest, and starts one macOS-owned one-shot LaunchAgent. The command returns a job ID, and
+the one-shot process dispatches the job to the persistent daemon. The caller
+can then disconnect without owning the transfer.
+
+```sh
+"$deploy_link" job submit --profile "$profile" /absolute/path/to/YourApp.app
+"$deploy_link" job status --profile "$profile" <job-id>
+"$deploy_link" job wait --profile "$profile" <job-id>
+"$deploy_link" job remove --profile "$profile" <job-id>
+```
+
+`status` reads the durable receipt without taking over the job. `wait` follows
+the same receipt until it reaches `installed`, `failed`, or `interrupted`.
+Receipts can also show `queued` or `running`. Only one job can be active for a
+profile; Deploy Link rejects a second submission instead of creating a queue.
+
+The one-shot trigger uses `RunAtLoad` without `KeepAlive`. After the daemon
+durably changes the receipt from `queued` to `running`, the daemon owns the
+transfer and receipt even if the trigger disconnects. It does not retry an
+interrupted or failed transfer, because ZipConduit cannot resume it safely.
+Before claiming the job, the daemon verifies the snapshot's bundle identity,
+version, build, and content digest against the submitted receipt.
+`installed` is written only after all of these checks pass:
+
+- the random daemon instance ID and session generation have not changed;
+- the profile install count has advanced by exactly one;
+- InstallationProxy has read back the exact bundle identifier, version, and
+  build.
+
+The private app snapshot and receipt remain available until an explicit
+`remove` cleans a terminal job. The Mac must stay awake and reachable, and the
+profile's warm Deploy Link session must remain available while the job runs.
+The job survives the submitting terminal or agent. A running transfer does not
+continue through loss of the Apple session or a Mac shutdown.
 
 ## Install diagnostics
 

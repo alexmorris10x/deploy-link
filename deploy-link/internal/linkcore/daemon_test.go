@@ -13,7 +13,7 @@ import (
 type fakeSession struct {
 	closed  atomic.Int32
 	done    chan error
-	install func(context.Context, AppBundle, func(int, string), time.Duration) error
+	install func(context.Context, AppBundle, func(int, string), func(string, uint64, uint64), time.Duration) error
 }
 
 func (s *fakeSession) Close() error {
@@ -25,9 +25,9 @@ func (s *fakeSession) Done() <-chan error {
 	return s.done
 }
 
-func (s *fakeSession) Install(ctx context.Context, app AppBundle, progress func(int, string), stallTimeout time.Duration) error {
+func (s *fakeSession) Install(ctx context.Context, app AppBundle, progress func(int, string), transferProgress func(string, uint64, uint64), stallTimeout time.Duration) error {
 	if s.install != nil {
-		return s.install(ctx, app, progress, stallTimeout)
+		return s.install(ctx, app, progress, transferProgress, stallTimeout)
 	}
 	return nil
 }
@@ -245,7 +245,7 @@ func TestDaemonSerializesInstalls(t *testing.T) {
 	}
 	var running atomic.Int32
 	var maximum atomic.Int32
-	session := &fakeSession{install: func(_ context.Context, _ AppBundle, progress func(int, string), _ time.Duration) error {
+	session := &fakeSession{install: func(_ context.Context, _ AppBundle, progress func(int, string), _ func(string, uint64, uint64), _ time.Duration) error {
 		current := running.Add(1)
 		for {
 			previous := maximum.Load()
@@ -288,7 +288,7 @@ func TestDaemonExpiresQueuedInstallBeforeItStarts(t *testing.T) {
 		return AppBundle{Path: "/tmp/Test.app", BundleIdentifier: "one.example.test"}, nil
 	}
 	var installs atomic.Int32
-	daemon.session = &fakeSession{install: func(context.Context, AppBundle, func(int, string), time.Duration) error {
+	daemon.session = &fakeSession{install: func(context.Context, AppBundle, func(int, string), func(string, uint64, uint64), time.Duration) error {
 		installs.Add(1)
 		return nil
 	}}
@@ -320,7 +320,7 @@ func TestDaemonRetainsSessionWhenInstallServiceFails(t *testing.T) {
 	var observedStallTimeout time.Duration
 	var observedHardTimeout time.Duration
 	session := &fakeSession{
-		install: func(ctx context.Context, _ AppBundle, _ func(int, string), stallTimeout time.Duration) error {
+		install: func(ctx context.Context, _ AppBundle, _ func(int, string), _ func(string, uint64, uint64), stallTimeout time.Duration) error {
 			observedStallTimeout = stallTimeout
 			if deadline, ok := ctx.Deadline(); ok {
 				observedHardTimeout = time.Until(deadline)

@@ -21,9 +21,12 @@ The downstream source adds structured, privacy-filtered install-transfer
 diagnostics in `internal/linkcore/daemon.go`, `session.go`, and
 `install_diagnostics.go`. The Link Core patch adds the explicit Tailnet dial
 path, context-bounded service setup, and byte-progress callback needed by those
-diagnostics. The upstream commit above remains the import base, not a claim that
-this tree is unchanged.
+diagnostics. It also adds profile-scoped unattended install jobs with private
+content-digested app snapshots, one-shot launchd workers, durable receipts, and exact
+bundle identifier, version, and build readback. The upstream commit above
+remains the import base, not a claim that this tree is unchanged.
 
 No live runtime files were copied into this directory. Pairing records,
-profiles, caches, logs, downloaded toolchains, and compiled binaries stay under
-the user's private local application-state directory.
+profiles, job snapshots and receipts, caches, logs, downloaded toolchains, and
+compiled binaries stay under the user's private local application-state
+directory.

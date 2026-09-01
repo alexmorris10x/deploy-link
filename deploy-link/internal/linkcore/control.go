@@ -13,16 +13,21 @@ import (
 	"time"
 )
 
+const ControlSchemaVersion = 2
+
 type Request struct {
 	Command string `json:"command"`
 	AppPath string `json:"app_path,omitempty"`
+	JobID   string `json:"job_id,omitempty"`
 }
 
 type Response struct {
 	OK            bool   `json:"ok"`
 	Final         bool   `json:"final"`
+	ControlSchema int    `json:"control_schema"`
 	Event         string `json:"event,omitempty"`
 	State         string `json:"state,omitempty"`
+	DaemonID      string `json:"daemon_id,omitempty"`
 	Generation    uint64 `json:"generation,omitempty"`
 	SessionLosses uint64 `json:"session_loss_count,omitempty"`
 	InstallCount  uint64 `json:"install_count,omitempty"`
@@ -36,6 +41,7 @@ type Response struct {
 
 type Snapshot struct {
 	State         string
+	DaemonID      string
 	Generation    uint64
 	SessionLosses uint64
 	InstallCount  uint64
@@ -46,8 +52,10 @@ func snapshotResponse(snapshot Snapshot) Response {
 	return Response{
 		OK:            true,
 		Final:         true,
+		ControlSchema: ControlSchemaVersion,
 		Event:         "status",
 		State:         snapshot.State,
+		DaemonID:      snapshot.DaemonID,
 		Generation:    snapshot.Generation,
 		SessionLosses: snapshot.SessionLosses,
 		InstallCount:  snapshot.InstallCount,
@@ -57,11 +65,12 @@ func snapshotResponse(snapshot Snapshot) Response {
 
 func errorResponse(err error) Response {
 	return Response{
-		OK:        false,
-		Final:     true,
-		Event:     "error",
-		ErrorCode: errorCode(err),
-		Error:     publicError(err),
+		OK:            false,
+		Final:         true,
+		ControlSchema: ControlSchemaVersion,
+		Event:         "error",
+		ErrorCode:     errorCode(err),
+		Error:         publicError(err),
 	}
 }
 
@@ -121,6 +130,10 @@ func Call(ctx context.Context, profilePath string, request Request, onResponse f
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = connection.SetDeadline(deadline)
 	}
+	stopCancellation := context.AfterFunc(ctx, func() {
+		_ = connection.SetDeadline(time.Now())
+	})
+	defer stopCancellation()
 	if err := json.NewEncoder(connection).Encode(request); err != nil {
 		return coded("control_request_failed", "could not send control request", err)
 	}
@@ -143,14 +156,27 @@ func Call(ctx context.Context, profilePath string, request Request, onResponse f
 }
 
 type safeEncoder struct {
-	mu      sync.Mutex
-	encoder *json.Encoder
+	mu         sync.Mutex
+	connection net.Conn
+	encoder    *json.Encoder
+	failed     bool
 }
 
 func (e *safeEncoder) Encode(response Response) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.encoder.Encode(response)
+	if e.failed {
+		return coded("control_response_failed", "client no longer accepts progress", nil)
+	}
+	if e.connection != nil {
+		_ = e.connection.SetWriteDeadline(time.Now().Add(2 * time.Second))
+		defer e.connection.SetWriteDeadline(time.Time{})
+	}
+	err := e.encoder.Encode(response)
+	if err != nil {
+		e.failed = true
+	}
+	return err
 }
 
 func writeOneResponse(writer io.Writer, response Response) error {
@@ -160,12 +186,15 @@ func writeOneResponse(writer io.Writer, response Response) error {
 func validateCommand(request Request) error {
 	switch request.Command {
 	case "status", "stop":
-		if request.AppPath != "" {
-			return coded("control_request_invalid", fmt.Sprintf("%s does not accept app_path", request.Command), nil)
+		if request.AppPath != "" || request.JobID != "" {
+			return coded("control_request_invalid", fmt.Sprintf("%s does not accept app_path or job_id", request.Command), nil)
 		}
 	case "install":
 		if request.AppPath == "" {
 			return coded("control_request_invalid", "install requires app_path", nil)
+		}
+		if request.JobID != "" && !validInstallJobID(request.JobID) {
+			return coded("control_request_invalid", "install job_id is invalid", nil)
 		}
 	default:
 		return coded("control_request_invalid", "unknown command", nil)
