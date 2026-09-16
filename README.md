@@ -95,6 +95,14 @@ must stay outside Git.
 ./scripts/install_deploy_link.sh
 ```
 
+The installer also places a native macOS app at `/Applications/Deploy Link.app`.
+Open it from Applications, Spotlight, or the Dock to see each configured device,
+start or stop its bridge, follow install progress, and drop a signed iOS `.app`
+onto a selected device. Closing or quitting the macOS app leaves the independent
+device bridge services running; stopping a bridge is always an explicit action.
+The app can optionally install its own user LaunchAgent for Launch at Login.
+That login item starts only the UI and does not control the device bridges.
+
 The wrapper uses the vendored, pinned source and keeps generated state under:
 
 ```text
