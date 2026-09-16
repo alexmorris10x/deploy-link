@@ -126,6 +126,67 @@ func TestDaemonJobInstallWritesProgressAndExactInstalledResult(t *testing.T) {
 	}
 }
 
+func TestDaemonJobRecordsRetryProgressBeforeSecondTransferAttempt(t *testing.T) {
+	daemon := testDaemon(t)
+	daemon.mu.Lock()
+	daemon.state = StateActive
+	daemon.generation = 5
+	daemon.installCount = 11
+	daemon.mu.Unlock()
+	daemon.retryDelay = func(int) time.Duration { return 0 }
+	job, artifactPath := writeDaemonInstallJob(t, daemon, InstallJobStateQueued)
+
+	daemon.validateApp = func(_ context.Context, path string) (AppBundle, error) {
+		return AppBundle{
+			Path:             path,
+			BundleIdentifier: job.Artifact.BundleIdentifier,
+			Version:          job.Artifact.Version,
+			Build:            job.Artifact.Build,
+		}, nil
+	}
+	var installCalls atomic.Int32
+	var retryProgress InstallJobProgress
+	daemon.session = &fakeSession{install: func(_ context.Context, _ AppBundle, _ func(int, string), transferProgress func(string, uint64, uint64), _ time.Duration) error {
+		switch installCalls.Add(1) {
+		case 1:
+			transferProgress("payload_sending", 50, 100)
+			return coded("install_retryable", "transient transport interruption", context.DeadlineExceeded)
+		case 2:
+			written, err := readInstallJobRecord(daemon.profilePath, job.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			retryProgress = written.Progress
+			return nil
+		default:
+			t.Fatalf("unexpected install attempt %d", installCalls.Load())
+			return nil
+		}
+	}}
+
+	if err := daemon.installRequest(context.Background(), Request{
+		Command: "install",
+		AppPath: artifactPath,
+		JobID:   job.ID,
+	}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := installCalls.Load(); got != 2 {
+		t.Fatalf("install calls = %d, want 2", got)
+	}
+	if retryProgress.Phase != "retrying" || retryProgress.Status != "Retrying app transfer" ||
+		retryProgress.Percent != 0 || retryProgress.BytesSent != 0 || retryProgress.BytesTotal != 100 {
+		t.Fatalf("retry progress = %#v", retryProgress)
+	}
+	written, err := readInstallJobRecord(daemon.profilePath, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if written.State != InstallJobStateInstalled || written.Progress.Percent != 100 {
+		t.Fatalf("terminal job after retry = %#v", written)
+	}
+}
+
 func TestDaemonJobRejectsChangedSnapshotContentsBeforeClaim(t *testing.T) {
 	daemon := testDaemon(t)
 	daemon.mu.Lock()

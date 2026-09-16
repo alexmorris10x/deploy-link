@@ -1,8 +1,8 @@
 # Deploy Link Architecture
 
-Document revision: `0.9.0`
+Document revision: `0.9.1`
 
-Revised: `2026-08-31`
+Revised: `2026-09-16`
 
 ## Decision
 
@@ -48,14 +48,22 @@ margin, which prevents profile changes from ending the client first. A true
 stall closes only the per-install ZipConduit service; the trusted outer session
 remains available for an explicit retry.
 
+EOF, unexpected EOF, connection reset, broken pipe, and network timeout are
+classified as transient transport failures. Within one accepted install, the
+daemon may create a fresh ZipConduit service and retry from byte zero, for at
+most three total transfer attempts. It retries only while the same outer
+session object and generation remain active. A rolling stall, cancellation,
+device rejection, session change, or exhausted attempt budget ends the install
+without another automatic attempt.
+
 ## Unattended install jobs
 
 An unattended job separates the lifetime of the install from the lifetime of
 the submitting CLI or agent. Submission validates the signed `.app`, copies it
 to an owner-only snapshot, records its full content SHA-256 digest in a durable receipt, and starts a
 profile-scoped one-shot LaunchAgent. The trigger uses `RunAtLoad` and does not
-use `KeepAlive`, so launchd dispatches it without turning a failure into an
-automatic retry. Once the receipt changes atomically from `queued` to
+use `KeepAlive`, so launchd dispatches it without restarting a terminal job.
+Once the receipt changes atomically from `queued` to
 `running`, the persistent daemon owns the transfer and receipt. Client output
 is best-effort and is not part of the success proof.
 
@@ -72,8 +80,10 @@ explicit `remove` cleans a terminal job.
 
 Each profile allows one active job and has no queue. A second submission is
 rejected while the first receipt is `queued` or `running`. Failed and
-interrupted jobs never retry automatically. A later transfer requires an
-explicit new submission because ZipConduit cannot resume an earlier payload.
+interrupted terminal jobs never restart automatically. A bounded transient
+transport retry may occur while the original job is still `running`; every
+attempt starts from byte zero. A later transfer after a terminal result requires
+an explicit new submission because ZipConduit cannot resume an earlier payload.
 
 Submission records a random daemon instance ID, the session generation, and
 the install-count baseline. Before the daemon claims a queued job, it verifies

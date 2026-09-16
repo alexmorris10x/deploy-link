@@ -75,7 +75,7 @@ It is a downstream copy based on:
 
 - source: `zjz-connect/xcode-deploy-link-deploy-beyond-local-network`;
 - commit: `66a39ee4da4ac7f6ad26c871552120ad56ead92b`;
-- version: `0.9.0`;
+- version: `0.9.1`;
 - Link Core: `danielpaulus/go-ios` at
   `3ebc297691a9e364772aef027744ebc0c49421a5`; and
 - Link Core patch SHA-256:
@@ -196,7 +196,11 @@ limit. Payload bytes, Apple installation stages, and device percentages reset
 it. A separate hard safety limit is at least 30 minutes. If the service truly
 stalls, Deploy Link closes only that install stream and preserves the warm outer
 session. ZipConduit has no resume support, so a later retry starts from byte
-zero.
+zero. Deploy Link retries transient EOF, reset, broken-pipe, and network-timeout
+failures within the same accepted install, for at most three total transfer
+attempts. It retries only while the same warm session and generation remain
+active; stalls, device rejections, cancellations, and terminal job failures are
+not retried automatically.
 
 An install is successful only when the command reaches `InstallComplete`, then
 InstallationProxy reads back the same bundle identifier, version, and build
@@ -225,8 +229,10 @@ profile; Deploy Link rejects a second submission instead of creating a queue.
 
 The one-shot trigger uses `RunAtLoad` without `KeepAlive`. After the daemon
 durably changes the receipt from `queued` to `running`, the daemon owns the
-transfer and receipt even if the trigger disconnects. It does not retry an
-interrupted or failed transfer, because ZipConduit cannot resume it safely.
+transfer and receipt even if the trigger disconnects. A bounded transient retry
+is part of that one running job, but an interrupted or failed terminal job is
+never restarted automatically. ZipConduit cannot resume, so each transfer
+attempt begins from byte zero.
 Before claiming the job, the daemon verifies the snapshot's bundle identity,
 version, build, and content digest against the submitted receipt.
 `installed` is written only after all of these checks pass:

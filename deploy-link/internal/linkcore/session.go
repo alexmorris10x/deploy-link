@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/danielpaulus/go-ios/ios"
@@ -21,6 +24,25 @@ type Session struct {
 }
 
 var errInstallStalled = errors.New("install made no progress")
+
+func isRetryableInstallTransferError(err error) bool {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ETIMEDOUT) {
+		return true
+	}
+	var networkError net.Error
+	return errors.As(err, &networkError) && (networkError.Timeout() || networkError.Temporary())
+}
+
+func finishInstallTransferError(diagnostic *installTransferDiagnostic, message string, diagnosticCode string, err error) error {
+	if isRetryableInstallTransferError(err) {
+		diagnostic.finish("retryable", "error_code", "transient_transport_interrupted")
+		return coded("install_retryable", message, err)
+	}
+	diagnostic.finish("failed", "error_code", diagnosticCode)
+	return coded("install_failed", message, err)
+}
 
 type installProgressTracker struct {
 	mu sync.Mutex
@@ -286,8 +308,7 @@ func (s *Session) Install(ctx context.Context, app AppBundle, progress func(int,
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return finishInstallContextError(diagnostic, ctxErr)
 		}
-		diagnostic.finish("failed", "error_code", "conduit_connect_failed")
-		return coded("install_failed", "could not connect to streaming zip conduit", err)
+		return finishInstallTransferError(diagnostic, "could not connect to streaming zip conduit", "conduit_connect_failed", err)
 	}
 	diagnostic.begin("conduit_connected")
 	installResult := make(chan error, 1)
@@ -327,8 +348,7 @@ func (s *Session) Install(ctx context.Context, app AppBundle, progress func(int,
 		return finishInstallContextError(diagnostic, ctx.Err())
 	}
 	if err != nil {
-		diagnostic.finish("failed", "error_code", "transfer_or_device_failed")
-		return coded("install_failed", "iOS rejected or interrupted the app transfer", err)
+		return finishInstallTransferError(diagnostic, "iOS rejected or interrupted the app transfer", "transfer_or_device_failed", err)
 	}
 
 	diagnostic.readback()

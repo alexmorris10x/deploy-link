@@ -22,6 +22,8 @@ const (
 	StateStopping   = "stopping"
 )
 
+const installTransferMaximumAttempts = 3
+
 type Daemon struct {
 	config       Config
 	profilePath  string
@@ -32,6 +34,7 @@ type Daemon struct {
 	validateApp  func(context.Context, string) (AppBundle, error)
 	writeJob     func(string, InstallJob) error
 	now          func() time.Time
+	retryDelay   func(int) time.Duration
 
 	mu              sync.RWMutex
 	operationMu     sync.Mutex
@@ -41,6 +44,7 @@ type Daemon struct {
 	installCount    uint64
 	installAttempts uint64
 	lastErrorCode   string
+	sessionEnded    bool
 	nextDiscovery   time.Time
 	discoveryFails  uint
 	session         sessionHandle
@@ -75,6 +79,9 @@ func NewDaemon(config Config, profilePath string) (*Daemon, error) {
 		validateApp:  ValidateApp,
 		writeJob:     writeInstallJob,
 		now:          time.Now,
+		retryDelay: func(completedAttempts int) time.Duration {
+			return time.Duration(completedAttempts) * time.Second
+		},
 	}, nil
 }
 
@@ -169,6 +176,7 @@ func (d *Daemon) establish(ctx context.Context) {
 	}
 	d.mu.Lock()
 	d.session = session
+	d.sessionEnded = false
 	d.resetDiscovery()
 	d.generation++
 	d.state = StateActive
@@ -186,6 +194,7 @@ func (d *Daemon) loseSession(generation uint64, err error) {
 	}
 	session := d.session
 	d.session = nil
+	d.sessionEnded = false
 	d.state = StateLost
 	d.lastErrorCode = "session_lost"
 	d.sessionLosses++
@@ -194,6 +203,20 @@ func (d *Daemon) loseSession(generation uint64, err error) {
 		_ = session.Close()
 	}
 	slog.Warn("Deploy Link outer tunnel stopped", "generation", generation, "error", err)
+}
+
+func (d *Daemon) markSessionEnded(session sessionHandle, generation uint64) {
+	d.mu.Lock()
+	if d.session == session && d.generation == generation {
+		d.sessionEnded = true
+	}
+	d.mu.Unlock()
+}
+
+func (d *Daemon) sessionCanRetry(session sessionHandle, generation uint64) bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.session == session && d.generation == generation && !d.sessionEnded
 }
 
 func waitContext(ctx context.Context, duration time.Duration) bool {
@@ -229,6 +252,7 @@ func (d *Daemon) connectionLoop(ctx context.Context) {
 			if !ok && err == nil {
 				err = errors.New("outer userspace tunnel stopped")
 			}
+			d.markSessionEnded(session, generation)
 			d.operationMu.Lock()
 			d.loseSession(generation, err)
 			d.operationMu.Unlock()
@@ -354,7 +378,33 @@ func (d *Daemon) installRequest(ctx context.Context, request Request, accepted f
 			progress(percent, status)
 		}
 	}
-	err = session.Install(installCtx, app, reportProgress, reportTransferProgress, d.config.InstallStallTimeout())
+	for transferAttempt := 1; transferAttempt <= installTransferMaximumAttempts; transferAttempt++ {
+		err = session.Install(installCtx, app, reportProgress, reportTransferProgress, d.config.InstallStallTimeout())
+		if err == nil || errorCode(err) != "install_retryable" {
+			break
+		}
+		if transferAttempt == installTransferMaximumAttempts || installCtx.Err() != nil ||
+			!d.sessionCanRetry(session, generation) {
+			err = coded("install_failed", "the app transfer was interrupted repeatedly", err)
+			break
+		}
+		var retryBytesTotal uint64
+		if job != nil {
+			retryBytesTotal = job.Progress.BytesTotal
+		}
+		writeProgress(InstallJobProgress{
+			Percent:    0,
+			Status:     "Retrying app transfer",
+			Phase:      "retrying",
+			BytesTotal: retryBytesTotal,
+		}, true)
+		slog.Warn("Deploy Link retrying transient install transfer", "generation", generation,
+			"install_attempt", installAttempt, "transfer_attempt", transferAttempt+1)
+		if !waitContext(installCtx, d.retryDelay(transferAttempt)) {
+			err = coded("install_failed", "installation stopped before the transfer retry", installCtx.Err())
+			break
+		}
+	}
 	if receiptWriteError != nil {
 		err = receiptWriteError
 	}

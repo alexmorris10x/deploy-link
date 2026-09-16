@@ -352,6 +352,167 @@ func TestDaemonRetainsSessionWhenInstallServiceFails(t *testing.T) {
 	}
 }
 
+func TestDaemonRetriesTransientInstallTransferAndThenSucceeds(t *testing.T) {
+	daemon := testDaemon(t)
+	daemon.validateApp = func(context.Context, string) (AppBundle, error) {
+		return AppBundle{Path: "/tmp/Test.app", BundleIdentifier: "one.example.test"}, nil
+	}
+	daemon.retryDelay = func(int) time.Duration { return 0 }
+	var calls atomic.Int32
+	session := &fakeSession{install: func(context.Context, AppBundle, func(int, string), func(string, uint64, uint64), time.Duration) error {
+		if calls.Add(1) == 1 {
+			return coded("install_retryable", "transient transport interruption", errors.New("connection reset"))
+		}
+		return nil
+	}}
+	daemon.session = session
+	daemon.state = StateActive
+	daemon.generation = 4
+
+	if err := daemon.install(context.Background(), "/tmp/Test.app", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("install calls = %d, want 2", got)
+	}
+	if got := daemon.Snapshot(); got.State != StateActive || got.InstallCount != 1 || got.Generation != 4 {
+		t.Fatalf("snapshot after retry success = %#v", got)
+	}
+	if daemon.currentSession() != session {
+		t.Fatal("successful retry replaced the warm outer session")
+	}
+}
+
+func TestDaemonStopsAfterMaximumTransientInstallAttempts(t *testing.T) {
+	daemon := testDaemon(t)
+	daemon.validateApp = func(context.Context, string) (AppBundle, error) {
+		return AppBundle{Path: "/tmp/Test.app", BundleIdentifier: "one.example.test"}, nil
+	}
+	daemon.retryDelay = func(int) time.Duration { return 0 }
+	var calls atomic.Int32
+	session := &fakeSession{install: func(context.Context, AppBundle, func(int, string), func(string, uint64, uint64), time.Duration) error {
+		calls.Add(1)
+		return coded("install_retryable", "transient transport interruption", errors.New("connection reset"))
+	}}
+	daemon.session = session
+	daemon.state = StateActive
+	daemon.generation = 2
+
+	err := daemon.install(context.Background(), "/tmp/Test.app", nil)
+	if errorCode(err) != "install_failed" {
+		t.Fatalf("install error = %v, want install_failed", err)
+	}
+	if got := calls.Load(); got != installTransferMaximumAttempts {
+		t.Fatalf("install calls = %d, want %d", got, installTransferMaximumAttempts)
+	}
+	if got := daemon.Snapshot(); got.State != StateRecovering || got.InstallCount != 0 || got.Generation != 2 {
+		t.Fatalf("snapshot after exhausted retries = %#v", got)
+	}
+	if daemon.currentSession() != session {
+		t.Fatal("exhausted retries discarded the warm outer session")
+	}
+}
+
+func TestDaemonDoesNotRetryPermanentInstallFailure(t *testing.T) {
+	daemon := testDaemon(t)
+	daemon.validateApp = func(context.Context, string) (AppBundle, error) {
+		return AppBundle{Path: "/tmp/Test.app", BundleIdentifier: "one.example.test"}, nil
+	}
+	daemon.retryDelay = func(int) time.Duration { return 0 }
+	var calls atomic.Int32
+	daemon.session = &fakeSession{install: func(context.Context, AppBundle, func(int, string), func(string, uint64, uint64), time.Duration) error {
+		calls.Add(1)
+		return coded("install_failed", "device rejected app", errors.New("rejected"))
+	}}
+	daemon.state = StateActive
+	daemon.generation = 3
+
+	if err := daemon.install(context.Background(), "/tmp/Test.app", nil); errorCode(err) != "install_failed" {
+		t.Fatalf("install error = %v, want install_failed", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("install calls = %d, want 1", got)
+	}
+}
+
+func TestDaemonDoesNotRetryAcrossSessionGenerationChange(t *testing.T) {
+	daemon := testDaemon(t)
+	daemon.validateApp = func(context.Context, string) (AppBundle, error) {
+		return AppBundle{Path: "/tmp/Test.app", BundleIdentifier: "one.example.test"}, nil
+	}
+	daemon.retryDelay = func(int) time.Duration { return 0 }
+	var calls atomic.Int32
+	session := &fakeSession{install: func(context.Context, AppBundle, func(int, string), func(string, uint64, uint64), time.Duration) error {
+		calls.Add(1)
+		daemon.mu.Lock()
+		daemon.generation++
+		daemon.mu.Unlock()
+		return coded("install_retryable", "transient transport interruption", errors.New("connection reset"))
+	}}
+	daemon.session = session
+	daemon.state = StateActive
+	daemon.generation = 7
+
+	if err := daemon.install(context.Background(), "/tmp/Test.app", nil); errorCode(err) != "install_failed" {
+		t.Fatalf("install error = %v, want install_failed", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("install calls = %d, want 1", got)
+	}
+	if got := daemon.Snapshot().Generation; got != 8 {
+		t.Fatalf("generation = %d, want 8", got)
+	}
+}
+
+func TestDaemonDoesNotRetryAfterOuterSessionEndsDuringInstall(t *testing.T) {
+	daemon := testDaemon(t)
+	daemon.validateApp = func(context.Context, string) (AppBundle, error) {
+		return AppBundle{Path: "/tmp/Test.app", BundleIdentifier: "one.example.test"}, nil
+	}
+	daemon.retryDelay = func(int) time.Duration { return 0 }
+	var calls atomic.Int32
+	session := &fakeSession{done: make(chan error, 1)}
+	session.install = func(context.Context, AppBundle, func(int, string), func(string, uint64, uint64), time.Duration) error {
+		calls.Add(1)
+		session.done <- errors.New("outer tunnel closed")
+		deadline := time.Now().Add(time.Second)
+		for daemon.sessionCanRetry(session, 9) {
+			if time.Now().After(deadline) {
+				t.Fatal("connection loop did not mark the outer session ended")
+			}
+			time.Sleep(time.Millisecond)
+		}
+		return coded("install_retryable", "transient transport interruption", errors.New("connection reset"))
+	}
+	daemon.session = session
+	daemon.state = StateActive
+	daemon.generation = 9
+
+	ctx, cancel := context.WithCancel(context.Background())
+	loopDone := make(chan struct{})
+	go func() {
+		daemon.connectionLoop(ctx)
+		close(loopDone)
+	}()
+
+	err := daemon.install(context.Background(), "/tmp/Test.app", nil)
+	if errorCode(err) != "install_failed" {
+		t.Fatalf("install error = %v, want install_failed", err)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("install calls = %d, want 1", got)
+	}
+	cancel()
+	select {
+	case <-loopDone:
+	case <-time.After(time.Second):
+		t.Fatal("connection loop did not stop")
+	}
+	if got := daemon.Snapshot().SessionLosses; got != 1 {
+		t.Fatalf("session losses = %d, want 1", got)
+	}
+}
+
 func TestDaemonServeControlSocketLifecycle(t *testing.T) {
 	daemon := testDaemon(t)
 	session := &fakeSession{}

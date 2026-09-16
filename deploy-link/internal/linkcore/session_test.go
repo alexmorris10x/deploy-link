@@ -3,11 +3,70 @@ package linkcore
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/danielpaulus/go-ios/ios/installationproxy"
 )
+
+type testTemporaryNetworkError struct {
+	timeout   bool
+	temporary bool
+}
+
+func (e testTemporaryNetworkError) Error() string   { return "temporary network error" }
+func (e testTemporaryNetworkError) Timeout() bool   { return e.timeout }
+func (e testTemporaryNetworkError) Temporary() bool { return e.temporary }
+
+func TestRetryableInstallTransferErrorClassification(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "EOF", err: io.EOF, want: true},
+		{name: "wrapped unexpected EOF", err: fmt.Errorf("stream ended: %w", io.ErrUnexpectedEOF), want: true},
+		{name: "connection reset", err: syscall.ECONNRESET, want: true},
+		{name: "broken pipe", err: syscall.EPIPE, want: true},
+		{name: "system timeout", err: syscall.ETIMEDOUT, want: true},
+		{name: "network timeout", err: testTemporaryNetworkError{timeout: true}, want: true},
+		{name: "temporary network error", err: testTemporaryNetworkError{temporary: true}, want: true},
+		{name: "permanent network error", err: testTemporaryNetworkError{}, want: false},
+		{name: "permanent error", err: errors.New("device rejected app"), want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := isRetryableInstallTransferError(test.err); got != test.want {
+				t.Fatalf("isRetryableInstallTransferError(%v) = %t, want %t", test.err, got, test.want)
+			}
+		})
+	}
+}
+
+func TestFinishInstallTransferErrorUsesRetryableClassification(t *testing.T) {
+	retryable := finishInstallTransferError(
+		newInstallTransferDiagnostic(context.Background()),
+		"could not connect to streaming zip conduit",
+		"conduit_connect_failed",
+		fmt.Errorf("open conduit: %w", io.EOF),
+	)
+	if got := errorCode(retryable); got != "install_retryable" {
+		t.Fatalf("retryable error code = %q, want install_retryable", got)
+	}
+
+	permanent := finishInstallTransferError(
+		newInstallTransferDiagnostic(context.Background()),
+		"could not connect to streaming zip conduit",
+		"conduit_connect_failed",
+		errors.New("pairing record rejected"),
+	)
+	if got := errorCode(permanent); got != "install_failed" {
+		t.Fatalf("permanent error code = %q, want install_failed", got)
+	}
+}
 
 func TestVerifyInstallReadbackRequiresExpectedIdentity(t *testing.T) {
 	expected := AppBundle{

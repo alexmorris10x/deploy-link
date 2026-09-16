@@ -161,6 +161,11 @@ Payload bytes, Apple installation stages, and device percentages reset it. A
 separate hard safety limit is at least 30 minutes. If the install stream truly
 stalls, the daemon closes only that stream and preserves the warm outer
 session. ZipConduit cannot resume, so a later retry starts from byte zero.
+Deploy Link retries transient EOF, reset, broken-pipe, and network-timeout
+failures within the same accepted install, for at most three total transfer
+attempts. It retries only while the same warm session and generation remain
+active; stalls, device rejections, cancellations, and terminal job failures are
+not retried automatically.
 
 The short-lived CLI submits the request to the persistent daemon. Success is
 reported only after streaming zip conduit completes and InstallationProxy reads
@@ -189,8 +194,10 @@ submission instead of creating a queue.
 
 The one-shot trigger uses `RunAtLoad` without `KeepAlive`. After the daemon
 durably changes `queued` to `running`, the daemon owns the transfer and receipt
-even if the trigger disconnects. It never retries a failed or interrupted
-transfer. Before it claims the job, the daemon verifies the snapshot's bundle
+even if the trigger disconnects. A bounded transient retry is part of that one
+running job, but a failed or interrupted terminal job is never restarted
+automatically. Each transfer attempt begins from byte zero. Before it claims
+the job, the daemon verifies the snapshot's bundle
 identity, version, build, and content digest against the submitted receipt.
 `installed` is written only after the random daemon instance ID and
 session generation remain unchanged, the install count advances by exactly
