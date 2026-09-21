@@ -28,6 +28,7 @@ trap cleanup EXIT
 
 stage_app="${stage_root}/Deploy Link.app"
 mkdir -p "${stage_app}/Contents/MacOS"
+mkdir -p "${stage_app}/Contents/Resources"
 
 /usr/bin/xcrun swiftc \
   -O \
@@ -40,6 +41,7 @@ mkdir -p "${stage_app}/Contents/MacOS"
   "${source_root}/DeployLinkStatusApp.swift" \
   -o "${stage_app}/Contents/MacOS/DeployLink"
 /bin/cp "${source_root}/Info.plist" "${stage_app}/Contents/Info.plist"
+/bin/cp "${source_root}/Resources/AppIcon.icns" "${stage_app}/Contents/Resources/AppIcon.icns"
 /usr/bin/codesign --force --sign - "${stage_app}" >/dev/null
 /usr/bin/codesign --verify --deep --strict "${stage_app}"
 

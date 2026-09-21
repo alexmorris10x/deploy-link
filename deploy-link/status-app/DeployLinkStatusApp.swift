@@ -8,9 +8,10 @@ import UniformTypeIdentifiers
 struct DeployLinkApp: App {
     @NSApplicationDelegateAdaptor(DeployLinkAppDelegate.self) private var appDelegate
     @StateObject private var store = DeployLinkStore()
+    @AppStorage("showMenuBar") private var showMenuBar = true
 
     var body: some Scene {
-        WindowGroup("Deploy Link") {
+        WindowGroup("Deploy Link", id: "dashboard") {
             DeployLinkDashboard()
                 .environmentObject(store)
                 .frame(minWidth: 680, minHeight: 520)
@@ -23,11 +24,50 @@ struct DeployLinkApp: App {
                     .keyboardShortcut("r")
             }
         }
+        MenuBarExtra("Deploy Link", systemImage: store.menuBarSymbol, isInserted: $showMenuBar) {
+            DeployLinkMenu()
+                .environmentObject(store)
+        }
+        .menuBarExtraStyle(.menu)
     }
 }
 
 final class DeployLinkAppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+}
+
+struct DeployLinkMenu: View {
+    @EnvironmentObject private var store: DeployLinkStore
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        ForEach(store.devices) { device in
+            Section(device.deviceLabel) {
+                Label(device.bridgeLabel, systemImage: device.deviceSymbol)
+                Button("Check & Reconnect") { store.checkAndReconnect(device) }
+                    .disabled(store.busyDeviceIDs.contains(device.id))
+                if device.needsPairingRepair {
+                    Button("Repair Pairing…") { store.repairPairing(device) }
+                        .disabled(store.busyDeviceIDs.contains(device.id))
+                }
+            }
+        }
+        if store.devices.isEmpty {
+            Text("No device profiles")
+        }
+        if let message = store.actionMessage {
+            Divider()
+            Text(message)
+        }
+        Divider()
+        Button("Open Deploy Link") {
+            openWindow(id: "dashboard")
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        Button("Refresh") { store.refresh() }
+        Divider()
+        Button("Quit Deploy Link") { NSApp.terminate(nil) }
+    }
 }
 
 @MainActor
@@ -36,6 +76,7 @@ final class DeployLinkStore: ObservableObject {
     @Published private(set) var busyDeviceIDs: Set<String> = []
     @Published var selectedDeviceID: String?
     @Published var alertMessage: String?
+    @Published var actionMessage: String?
 
     private let reader = DeployLinkStateReader()
     private let runner = DeployLinkCommandRunner()
@@ -65,11 +106,49 @@ final class DeployLinkStore: ObservableObject {
     }
 
     func start(_ device: DeviceInstallStatus) {
-        run(device: device, arguments: ["launch-agent", "install", "--profile", device.profilePath])
+        run(
+            device: device,
+            arguments: ["launch-agent", "install", "--profile", device.profilePath],
+            successMessage: "Started \(device.deviceLabel); waiting for the device to reconnect."
+        )
     }
 
     func stop(_ device: DeviceInstallStatus) {
-        run(device: device, arguments: ["launch-agent", "remove", "--profile", device.profilePath])
+        run(
+            device: device,
+            arguments: ["launch-agent", "remove", "--profile", device.profilePath],
+            successMessage: "Stopped \(device.deviceLabel)."
+        )
+    }
+
+    var menuBarSymbol: String {
+        guard !devices.isEmpty else { return "link.circle" }
+        return devices.allSatisfy { $0.bridgeState == "active" } ? "link.circle.fill" : "exclamationmark.circle.fill"
+    }
+
+    func checkAndReconnect(_ device: DeviceInstallStatus) {
+        if device.bridgeState == "active" {
+            actionMessage = "\(device.deviceLabel) is ready."
+        } else if !device.serviceEnabled {
+            actionMessage = "Starting \(device.deviceLabel)…"
+            start(device)
+        } else if device.lastErrorCode == "remote_pairing_cold" {
+            actionMessage = "Join any Wi-Fi on \(device.deviceLabel); Deploy Link is already waiting to reconnect."
+        } else if device.needsPairingRepair {
+            actionMessage = "Connect \(device.deviceLabel) by USB, unlock it, then choose Repair Pairing."
+        } else {
+            actionMessage = "\(device.deviceLabel) is reconnecting."
+            refresh()
+        }
+    }
+
+    func repairPairing(_ device: DeviceInstallStatus) {
+        actionMessage = "Repairing \(device.deviceLabel)…"
+        run(
+            device: device,
+            arguments: ["pair", "repair", "--profile", device.profilePath],
+            successMessage: "\(device.deviceLabel) is paired and ready."
+        )
     }
 
     func submit(_ appURL: URL) {
@@ -95,15 +174,17 @@ final class DeployLinkStore: ObservableObject {
         }
     }
 
-    private func run(device: DeviceInstallStatus, arguments: [String]) {
+    private func run(device: DeviceInstallStatus, arguments: [String], successMessage: String) {
         guard !busyDeviceIDs.contains(device.id) else { return }
         busyDeviceIDs.insert(device.id)
         Task {
             do {
                 _ = try await runner.run(arguments)
+                actionMessage = successMessage
                 refresh()
             } catch {
                 alertMessage = error.localizedDescription
+                actionMessage = error.localizedDescription
             }
             busyDeviceIDs.remove(device.id)
         }
@@ -113,6 +194,7 @@ final class DeployLinkStore: ObservableObject {
 struct DeployLinkDashboard: View {
     @EnvironmentObject private var store: DeployLinkStore
     @StateObject private var launchAtLogin = LaunchAtLoginController()
+    @AppStorage("showMenuBar") private var showMenuBar = true
     @State private var isDropTargeted = false
     @State private var pendingStop: DeviceInstallStatus?
 
@@ -244,6 +326,7 @@ struct DeployLinkDashboard: View {
                 set: { launchAtLogin.setEnabled($0) }
             ))
             .disabled(launchAtLogin.isChanging)
+            Toggle("Show in Menu Bar", isOn: $showMenuBar)
             if let note = launchAtLogin.statusNote {
                 Text(note).font(.caption).foregroundStyle(.secondary)
             }
@@ -437,7 +520,12 @@ struct DeviceInstallStatus: Identifiable, Equatable {
     let deviceLabel: String
     let serviceEnabled: Bool
     let bridgeState: String?
+    let lastErrorCode: String?
     let job: InstallJobReceipt?
+
+    var needsPairingRepair: Bool {
+        lastErrorCode == "pair_verify_failed" || lastErrorCode == "pair_record_invalid"
+    }
 
     var bridgeLabel: String {
         guard serviceEnabled else { return "Stopped" }
@@ -445,7 +533,7 @@ struct DeviceInstallStatus: Identifiable, Equatable {
         case "active": return "Connected"
         case "connecting": return "Connecting"
         case "stopping": return "Stopping"
-        case "failed": return "Needs attention"
+        case "failed": return needsPairingRepair ? "Pairing needs repair" : "Needs attention"
         case .some(let state): return state.replacingOccurrences(of: "_", with: " ").capitalized
         case .none: return "Starting"
         }
@@ -560,6 +648,11 @@ struct InstallJobReceipt: Decodable, Equatable {
     private var updatedDate: Date { parseDeployLinkDate(updatedAt) ?? Date.distantPast }
 }
 
+private struct BridgeSnapshot {
+    let state: String
+    let lastErrorCode: String?
+}
+
 struct DeployLinkStateReader {
     private let fileManager = FileManager.default
     private let decoder = JSONDecoder()
@@ -571,12 +664,14 @@ struct DeployLinkStateReader {
             let stem = profileURL.deletingPathExtension().lastPathComponent
             let jobsRoot = profileURL.deletingLastPathComponent().appendingPathComponent(".\(stem)-install-jobs", isDirectory: true)
             let enabled = launchAgentIsLoaded(profilePath: profileURL.path)
+            let snapshot = enabled ? bridgeSnapshot(profilePath: profileURL.path) : nil
             return DeviceInstallStatus(
                 id: profileURL.path,
                 profilePath: profileURL.path,
                 deviceLabel: profile.deviceLabel,
                 serviceEnabled: enabled,
-                bridgeState: enabled ? bridgeState(profilePath: profileURL.path) : nil,
+                bridgeState: snapshot?.state,
+                lastErrorCode: snapshot?.lastErrorCode,
                 job: latestReceipt(in: jobsRoot)
             )
         }
@@ -617,7 +712,7 @@ struct DeployLinkStateReader {
         }
     }
 
-    private func bridgeState(profilePath: String) -> String? {
+    private func bridgeSnapshot(profilePath: String) -> BridgeSnapshot? {
         guard let binary = DeployLinkCommandRunner.binaryURL() else { return nil }
         let process = Process()
         let output = Pipe()
@@ -631,7 +726,8 @@ struct DeployLinkStateReader {
             let data = output.fileHandleForReading.readDataToEndOfFile()
             guard process.terminationStatus == 0,
                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-            return object["state"] as? String
+            guard let state = object["state"] as? String else { return nil }
+            return BridgeSnapshot(state: state, lastErrorCode: object["last_error_code"] as? String)
         } catch { return nil }
     }
 

@@ -286,7 +286,7 @@ func launchAgent(arguments []string) error {
 
 func run(arguments []string) error {
 	if len(arguments) == 0 {
-		return errors.New("command required: configure, doctor, serve, supervise, status, watch, install, job, stop, launch-agent, version")
+		return errors.New("command required: configure, doctor, serve, supervise, status, watch, install, job, stop, launch-agent, pair, version")
 	}
 	switch arguments[0] {
 	case "configure":
@@ -305,6 +305,8 @@ func run(arguments []string) error {
 		return job(arguments[1:])
 	case "launch-agent":
 		return launchAgent(arguments[1:])
+	case "pair":
+		return pair(arguments[1:])
 	case "version":
 		emit(map[string]any{"version": version, "link_core_commit": linkCoreCommit, "patch_sha256": patchSHA})
 		return nil

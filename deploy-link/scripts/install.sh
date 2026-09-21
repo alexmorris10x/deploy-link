@@ -2,8 +2,9 @@
 
 set -euo pipefail
 
-module_version="0.9.1"
+module_version="0.10.0"
 go_version="1.26.5"
+pairing_helper_version="11.15.5"
 go_archive_sha256="efb87ff28af9a188d0536ef5d42e63dd52ba8263cd7344a993cc48dd11dedb6a"
 link_core_commit="3ebc297691a9e364772aef027744ebc0c49421a5"
 link_core_upstream_repository="https://github.com/danielpaulus/go-ios.git"
@@ -20,6 +21,7 @@ sources_directory="${build_root}/sources"
 workspaces_directory="${build_root}/workspaces"
 cache_directory="${build_root}/cache"
 binary_directory="${runtime_root}/bin"
+pairing_tool_root="${runtime_root}/tools/pymobiledevice3-${pairing_helper_version}"
 
 fail() {
   printf 'Deploy Link install failed: %s\n' "$1" >&2
@@ -32,7 +34,7 @@ require_command() {
 
 [[ "$(uname -s)" == "Darwin" ]] || fail "macOS is required"
 [[ "$(uname -m)" == "arm64" ]] || fail "Apple silicon is required"
-for command_name in curl git shasum tar; do
+for command_name in curl git shasum tar uv; do
   require_command "${command_name}"
 done
 [[ -f "${patch_path}" ]] || fail "downstream Link Core patch is missing"
@@ -40,11 +42,23 @@ done
 umask 077
 mkdir -p "${runtime_root}" "${build_root}" "${downloads_directory}" \
   "${toolchains_directory}" "${sources_directory}" "${workspaces_directory}" \
-  "${cache_directory}/go-build" "${cache_directory}/go-mod" "${binary_directory}"
+  "${cache_directory}/go-build" "${cache_directory}/go-mod" "${cache_directory}/uv" \
+  "${binary_directory}" "${pairing_tool_root}/bin" "${pairing_tool_root}/envs"
 chmod 0700 "${runtime_root}" "${build_root}" "${downloads_directory}" \
   "${toolchains_directory}" "${sources_directory}" "${workspaces_directory}" \
   "${cache_directory}" "${cache_directory}/go-build" "${cache_directory}/go-mod" \
-  "${binary_directory}"
+  "${cache_directory}/uv" "${binary_directory}" "${pairing_tool_root}" \
+  "${pairing_tool_root}/bin" "${pairing_tool_root}/envs"
+
+if [[ ! -x "${pairing_tool_root}/bin/pymobiledevice3" ]]; then
+  UV_TOOL_DIR="${pairing_tool_root}/envs" \
+  UV_TOOL_BIN_DIR="${pairing_tool_root}/bin" \
+  UV_PYTHON_INSTALL_DIR="${pairing_tool_root}/python" \
+  UV_CACHE_DIR="${cache_directory}/uv" \
+    uv tool install --python 3.13 --no-progress "pymobiledevice3==${pairing_helper_version}"
+fi
+[[ -x "${pairing_tool_root}/bin/pymobiledevice3" ]] \
+  || fail "pinned pymobiledevice3 helper was not installed"
 
 staging_root="$(mktemp -d "${build_root}/.install.XXXXXX")"
 cleanup() {
