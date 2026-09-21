@@ -397,7 +397,7 @@ struct DeviceCard: View {
                     Button("Start", action: start).buttonStyle(.borderedProminent).disabled(isBusy)
                 }
             }
-            if let job = device.job {
+            if let job = device.job, job.shouldShowInDashboard {
                 Divider()
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
@@ -559,6 +559,8 @@ struct DeployLinkProfile: Decodable {
 }
 
 struct InstallJobReceipt: Decodable, Equatable {
+    private static let completedVisibilityDuration: TimeInterval = 60
+
     let id: String
     let state: String
     let artifact: Artifact
@@ -600,6 +602,11 @@ struct InstallJobReceipt: Decodable, Equatable {
 
     var isActive: Bool { state == "queued" || state == "running" }
     var isStalled: Bool { state == "running" && Date().timeIntervalSince(updatedDate) >= 300 }
+    var shouldShowInDashboard: Bool {
+        guard state == "installed" else { return true }
+        guard let finishedDate = finishedAt.flatMap(parseDeployLinkDate) else { return false }
+        return Date().timeIntervalSince(finishedDate) < Self.completedVisibilityDuration
+    }
     var stateLabel: String {
         if isStalled { return "Stalled" }
         switch state {
