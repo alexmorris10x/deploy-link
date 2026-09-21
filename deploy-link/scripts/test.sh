@@ -14,25 +14,35 @@ patch_sha256="$(shasum -a 256 "${module_directory}/patches/link-core-tailnet.pat
 go_binary="${runtime_root}/build/toolchains/go1.26.5/bin/go"
 source_root="${runtime_root}/build/sources/link-core-${link_core_commit}-${patch_sha256}"
 workspace_file="${runtime_root}/build/workspaces/${patch_sha256}/go.work"
-go_cache="${runtime_root}/build/cache/go-build"
-module_cache="${runtime_root}/build/cache/go-mod"
+go_path="${runtime_root}/build/cache/gopath"
+go_build_cache="${runtime_root}/build/cache/go-build"
+go_module_cache="${runtime_root}/build/cache/go-mod"
 deploy_link_binary="${runtime_root}/bin/deploy-link"
+
+# Keep direct test invocations from falling back to Go's default $HOME/go path.
+export GOPATH="${go_path}"
+export GOCACHE="${go_build_cache}"
+export GOMODCACHE="${go_module_cache}"
+
+[[ "$("${go_binary}" env GOPATH)" == "${go_path}" ]]
+[[ "$("${go_binary}" env GOCACHE)" == "${go_build_cache}" ]]
+[[ "$("${go_binary}" env GOMODCACHE)" == "${go_module_cache}" ]]
 
 git -C "${source_root}" apply --unidiff-zero --reverse --check "${module_directory}/patches/link-core-tailnet.patch"
 git -C "${source_root}" diff --check
 
 (
   cd "${source_root}"
-  GOWORK="${workspace_file}" GOCACHE="${go_cache}" GOMODCACHE="${module_cache}" \
+  GOWORK="${workspace_file}" \
     "${go_binary}" test ./ios ./ios/tunnel ./ios/installationproxy ./ios/zipconduit
 )
 (
   cd "${module_directory}"
-  GOWORK="${workspace_file}" GOCACHE="${go_cache}" GOMODCACHE="${module_cache}" \
+  GOWORK="${workspace_file}" \
     "${go_binary}" test ./...
-  GOWORK="${workspace_file}" GOCACHE="${go_cache}" GOMODCACHE="${module_cache}" \
+  GOWORK="${workspace_file}" \
     "${go_binary}" test -race ./...
-  GOWORK="${workspace_file}" GOCACHE="${go_cache}" GOMODCACHE="${module_cache}" \
+  GOWORK="${workspace_file}" \
     "${go_binary}" vet ./...
 )
 

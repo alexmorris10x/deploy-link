@@ -20,6 +20,9 @@ toolchains_directory="${build_root}/toolchains"
 sources_directory="${build_root}/sources"
 workspaces_directory="${build_root}/workspaces"
 cache_directory="${build_root}/cache"
+go_path="${cache_directory}/gopath"
+go_build_cache="${cache_directory}/go-build"
+go_module_cache="${cache_directory}/go-mod"
 binary_directory="${runtime_root}/bin"
 pairing_tool_root="${runtime_root}/tools/pymobiledevice3-${pairing_helper_version}"
 
@@ -42,13 +45,18 @@ done
 umask 077
 mkdir -p "${runtime_root}" "${build_root}" "${downloads_directory}" \
   "${toolchains_directory}" "${sources_directory}" "${workspaces_directory}" \
-  "${cache_directory}/go-build" "${cache_directory}/go-mod" "${cache_directory}/uv" \
+  "${go_path}" "${go_build_cache}" "${go_module_cache}" "${cache_directory}/uv" \
   "${binary_directory}" "${pairing_tool_root}/bin" "${pairing_tool_root}/envs"
 chmod 0700 "${runtime_root}" "${build_root}" "${downloads_directory}" \
   "${toolchains_directory}" "${sources_directory}" "${workspaces_directory}" \
-  "${cache_directory}" "${cache_directory}/go-build" "${cache_directory}/go-mod" \
+  "${cache_directory}" "${go_path}" "${go_build_cache}" "${go_module_cache}" \
   "${cache_directory}/uv" "${binary_directory}" "${pairing_tool_root}" \
   "${pairing_tool_root}/bin" "${pairing_tool_root}/envs"
+
+# Keep all Go-generated state inside Deploy Link's rebuildable runtime cache.
+export GOPATH="${go_path}"
+export GOCACHE="${go_build_cache}"
+export GOMODCACHE="${go_module_cache}"
 
 if [[ ! -x "${pairing_tool_root}/bin/pymobiledevice3" ]]; then
   UV_TOOL_DIR="${pairing_tool_root}/envs" \
@@ -144,8 +152,6 @@ ldflags="-s -w -X main.version=${module_version} -X main.linkCoreCommit=${link_c
 (
   cd "${module_directory}"
   GOWORK="${workspace_file}" \
-    GOCACHE="${cache_directory}/go-build" \
-    GOMODCACHE="${cache_directory}/go-mod" \
     "${go_binary}" build -buildvcs=false -trimpath -ldflags "${ldflags}" \
       -o "${staged_binary}" ./cmd/deploy-link
 )
