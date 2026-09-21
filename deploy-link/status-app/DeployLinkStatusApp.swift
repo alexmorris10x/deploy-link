@@ -24,9 +24,13 @@ struct DeployLinkApp: App {
                     .keyboardShortcut("r")
             }
         }
-        MenuBarExtra("Deploy Link", systemImage: store.menuBarSymbol, isInserted: $showMenuBar) {
+        MenuBarExtra(isInserted: $showMenuBar) {
             DeployLinkMenu()
                 .environmentObject(store)
+        } label: {
+            Image(systemName: store.menuBarSymbol)
+                .foregroundStyle(store.menuBarColor)
+                .accessibilityLabel(store.menuBarAccessibilityLabel)
         }
         .menuBarExtraStyle(.menu)
     }
@@ -43,7 +47,18 @@ struct DeployLinkMenu: View {
     var body: some View {
         ForEach(store.devices) { device in
             Section(device.deviceLabel) {
-                Label(device.bridgeLabel, systemImage: device.deviceSymbol)
+                Label {
+                    HStack(spacing: 6) {
+                        Text(device.bridgeLabel)
+                        if device.isConnected {
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(.green)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                } icon: {
+                    Image(systemName: device.deviceSymbol)
+                }
                 Button("Check & Reconnect") { store.checkAndReconnect(device) }
                     .disabled(store.busyDeviceIDs.contains(device.id))
                 if device.needsPairingRepair {
@@ -122,8 +137,26 @@ final class DeployLinkStore: ObservableObject {
     }
 
     var menuBarSymbol: String {
-        guard !devices.isEmpty else { return "link.circle" }
-        return devices.allSatisfy { $0.bridgeState == "active" } ? "link.circle.fill" : "exclamationmark.circle.fill"
+        if hasActiveTransfer { return "arrow.up.circle.fill" }
+        return allDevicesConnected ? "checkmark.circle.fill" : "xmark.circle.fill"
+    }
+
+    var menuBarColor: Color {
+        if hasActiveTransfer { return .orange }
+        return allDevicesConnected ? .green : .red
+    }
+
+    var menuBarAccessibilityLabel: String {
+        if hasActiveTransfer { return "Deploy Link, transferring" }
+        return allDevicesConnected ? "Deploy Link, connected" : "Deploy Link, disconnected"
+    }
+
+    private var hasActiveTransfer: Bool {
+        devices.contains { $0.job?.isActive == true }
+    }
+
+    var allDevicesConnected: Bool {
+        !devices.isEmpty && devices.allSatisfy(\.isConnected)
     }
 
     func checkAndReconnect(_ device: DeviceInstallStatus) {
@@ -525,6 +558,10 @@ struct DeviceInstallStatus: Identifiable, Equatable {
 
     var needsPairingRepair: Bool {
         lastErrorCode == "pair_verify_failed" || lastErrorCode == "pair_record_invalid"
+    }
+
+    var isConnected: Bool {
+        serviceEnabled && bridgeState == "active"
     }
 
     var bridgeLabel: String {
