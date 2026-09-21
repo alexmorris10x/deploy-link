@@ -1,4 +1,4 @@
-# Remote iOS Iteration Prototype
+# Deploy Link
 
 This repository tests direct iOS development installs when the Mac and a paired
 iPhone or iPad are on different physical networks.
