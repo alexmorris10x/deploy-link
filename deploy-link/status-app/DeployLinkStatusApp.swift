@@ -37,6 +37,17 @@ struct DeployLinkApp: App {
 }
 
 final class DeployLinkAppDelegate: NSObject, NSApplicationDelegate {
+    private let hideFromDockKey = "hideFromDock"
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        UserDefaults.standard.register(defaults: [hideFromDockKey: true])
+        setDockVisibility(hidden: UserDefaults.standard.bool(forKey: hideFromDockKey))
+    }
+
+    func setDockVisibility(hidden: Bool) {
+        _ = NSApp.setActivationPolicy(hidden ? .accessory : .regular)
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }
 
@@ -228,6 +239,7 @@ struct DeployLinkDashboard: View {
     @EnvironmentObject private var store: DeployLinkStore
     @StateObject private var launchAtLogin = LaunchAtLoginController()
     @AppStorage("showMenuBar") private var showMenuBar = true
+    @AppStorage("hideFromDock") private var hideFromDock = true
     @State private var isDropTargeted = false
     @State private var pendingStop: DeviceInstallStatus?
 
@@ -360,6 +372,13 @@ struct DeployLinkDashboard: View {
             ))
             .disabled(launchAtLogin.isChanging)
             Toggle("Show in Menu Bar", isOn: $showMenuBar)
+            Toggle("Hide from Dock", isOn: $hideFromDock)
+                .onChange(of: hideFromDock) { hidden in
+                    NSApp.setActivationPolicy(hidden ? .accessory : .regular)
+                }
+            Text("Keep Deploy Link available from the menu bar without a Dock icon.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             if let note = launchAtLogin.statusNote {
                 Text(note).font(.caption).foregroundStyle(.secondary)
             }
