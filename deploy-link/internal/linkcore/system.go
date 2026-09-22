@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-const ModuleVersion = "0.9.1"
+const ModuleVersion = "0.10.1"
 const PinnedLinkCoreCommit = "3ebc297691a9e364772aef027744ebc0c49421a5"
 
 type DoctorReport struct {

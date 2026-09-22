@@ -93,7 +93,7 @@ func TestDaemonJobInstallWritesProgressAndExactInstalledResult(t *testing.T) {
 		accepted.Add(1)
 	}, func(percent int, status string) {
 		observedProgress = append(observedProgress, InstallJobProgress{Percent: percent, Status: status})
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +168,7 @@ func TestDaemonJobRecordsRetryProgressBeforeSecondTransferAttempt(t *testing.T) 
 		Command: "install",
 		AppPath: artifactPath,
 		JobID:   job.ID,
-	}, nil, nil); err != nil {
+	}, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := installCalls.Load(); got != 2 {
@@ -212,7 +212,7 @@ func TestDaemonJobRejectsChangedSnapshotContentsBeforeClaim(t *testing.T) {
 		return nil
 	}}
 
-	err := daemon.installRequest(context.Background(), Request{Command: "install", AppPath: artifactPath, JobID: job.ID}, nil, nil)
+	err := daemon.installRequest(context.Background(), Request{Command: "install", AppPath: artifactPath, JobID: job.ID}, nil, nil, nil)
 	if errorCode(err) != "job_snapshot_changed" {
 		t.Fatalf("changed snapshot error code = %q, want job_snapshot_changed", errorCode(err))
 	}
@@ -252,7 +252,7 @@ func TestDaemonJobProgressWriteFailureCreatesTerminalReceipt(t *testing.T) {
 		return nil
 	}}
 
-	err := daemon.installRequest(context.Background(), Request{Command: "install", AppPath: artifactPath, JobID: job.ID}, nil, nil)
+	err := daemon.installRequest(context.Background(), Request{Command: "install", AppPath: artifactPath, JobID: job.ID}, nil, nil, nil)
 	if errorCode(err) != "job_write_failed" {
 		t.Fatalf("progress write error code = %q, want job_write_failed", errorCode(err))
 	}

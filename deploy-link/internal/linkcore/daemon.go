@@ -261,10 +261,16 @@ func (d *Daemon) connectionLoop(ctx context.Context) {
 }
 
 func (d *Daemon) install(ctx context.Context, appPath string, progress func(int, string)) error {
-	return d.installRequest(ctx, Request{Command: "install", AppPath: appPath}, nil, progress)
+	return d.installRequest(ctx, Request{Command: "install", AppPath: appPath}, nil, progress, nil)
 }
 
-func (d *Daemon) installRequest(ctx context.Context, request Request, accepted func(), progress func(int, string)) error {
+func (d *Daemon) installRequest(
+	ctx context.Context,
+	request Request,
+	accepted func(),
+	progress func(int, string),
+	transferProgress func(Response),
+) error {
 	installCtx, cancel := context.WithTimeout(ctx, d.config.InstallHardTimeout())
 	defer cancel()
 	validationCtx, validationCancel := context.WithTimeout(installCtx, 30*time.Second)
@@ -306,9 +312,13 @@ func (d *Daemon) installRequest(ctx context.Context, request Request, accepted f
 	if accepted != nil {
 		accepted()
 	}
-	installCtx = withInstallDiagnosticContext(installCtx, installAttempt, generation, time.Now())
+	installStartedAt := d.now()
+	installCtx = withInstallDiagnosticContext(installCtx, installAttempt, generation, installStartedAt)
 	var receiptWriteError error
 	var lastReceiptWrite time.Time
+	var lastDirectProgress time.Time
+	lastDirectPhase := ""
+	lastDirectPercent := -1
 	writeProgress := func(next InstallJobProgress, force bool) {
 		if job == nil || receiptWriteError != nil {
 			return
@@ -329,6 +339,46 @@ func (d *Daemon) installRequest(ctx context.Context, request Request, accepted f
 		lastReceiptWrite = now
 	}
 	reportTransferProgress := func(phase string, bytesSent uint64, bytesTotal uint64) {
+		percent := 0
+		if bytesTotal > 0 {
+			percent = int(bytesSent * 100 / bytesTotal)
+		}
+		status := "Transferring app"
+		if phase == "payload_complete" || phase == "awaiting_device_progress" {
+			percent = 100
+			status = "Waiting for device"
+		} else if phase == "readback" {
+			percent = 100
+			status = "Verifying installed app"
+		}
+		now := d.now()
+		if transferProgress != nil && (phase != lastDirectPhase || percent != lastDirectPercent || now.Sub(lastDirectProgress) >= time.Second) {
+			elapsed := now.Sub(installStartedAt)
+			if elapsed < 0 {
+				elapsed = 0
+			}
+			var throughput uint64
+			if elapsed > 0 {
+				throughput = uint64(float64(bytesSent) / elapsed.Seconds())
+			}
+			transferProgress(Response{
+				OK:            true,
+				Final:         false,
+				ControlSchema: ControlSchemaVersion,
+				Event:         "install_transfer",
+				State:         StateInstalling,
+				Percent:       percent,
+				Status:        status,
+				Phase:         phase,
+				BytesSent:     bytesSent,
+				BytesTotal:    bytesTotal,
+				ElapsedMS:     elapsed.Milliseconds(),
+				ThroughputBPS: throughput,
+			})
+			lastDirectPhase = phase
+			lastDirectPercent = percent
+			lastDirectProgress = now
+		}
 		if job == nil || receiptWriteError != nil {
 			return
 		}
@@ -337,23 +387,14 @@ func (d *Daemon) installRequest(ctx context.Context, request Request, accepted f
 		if !advanced {
 			return
 		}
-		percent := 0
-		if bytesTotal > 0 {
-			percent = int(bytesSent * 90 / bytesTotal)
-			if percent > 90 {
-				percent = 90
-			}
-		}
-		status := "Transferring app"
+		jobPercent := percent * 90 / 100
 		if phase == "payload_complete" || phase == "awaiting_device_progress" {
-			percent = 90
-			status = "Waiting for device"
+			jobPercent = 90
 		} else if phase == "readback" {
-			percent = 99
-			status = "Verifying installed app"
+			jobPercent = 99
 		}
 		writeProgress(InstallJobProgress{
-			Percent:    percent,
+			Percent:    jobPercent,
 			Status:     status,
 			Phase:      phase,
 			BytesSent:  bytesSent,
@@ -409,8 +450,12 @@ func (d *Daemon) installRequest(ctx context.Context, request Request, accepted f
 		err = receiptWriteError
 	}
 	if err != nil {
-		d.setState(StateRecovering, "service_unresponsive")
-		slog.Warn("Deploy Link install service failed; retaining outer tunnel", "generation", generation, "install_attempt", installAttempt, "errorCode", errorCode(err))
+		if ctx.Err() != nil {
+			d.setState(StateActive, "")
+		} else {
+			d.setState(StateRecovering, "service_unresponsive")
+			slog.Warn("Deploy Link install service failed; retaining outer tunnel", "generation", generation, "install_attempt", installAttempt, "errorCode", errorCode(err))
+		}
 		if job != nil {
 			state := InstallJobStateFailed
 			if ctx.Err() != nil {
@@ -499,11 +544,23 @@ func (d *Daemon) handleConnection(ctx context.Context, connection net.Conn) {
 			d.cancel()
 		}
 	case "install":
-		err := d.installRequest(ctx, request, func() {
-			_ = encoder.Encode(Response{OK: true, Final: false, ControlSchema: ControlSchemaVersion, Event: "accepted", State: d.Snapshot().State})
+		installCtx, cancelInstall := context.WithCancel(ctx)
+		defer cancelInstall()
+		go func() {
+			var buffer [1]byte
+			_, _ = connection.Read(buffer[:])
+			cancelInstall()
+		}()
+		encode := func(response Response) {
+			if err := encoder.Encode(response); err != nil {
+				cancelInstall()
+			}
+		}
+		err := d.installRequest(installCtx, request, func() {
+			encode(Response{OK: true, Final: false, ControlSchema: ControlSchemaVersion, Event: "accepted", State: d.Snapshot().State})
 		}, func(percent int, status string) {
-			_ = encoder.Encode(Response{OK: true, Final: false, ControlSchema: ControlSchemaVersion, Event: "progress", Percent: percent, Status: status})
-		})
+			encode(Response{OK: true, Final: false, ControlSchema: ControlSchemaVersion, Event: "progress", Percent: percent, Status: status})
+		}, encode)
 		if err != nil {
 			_ = encoder.Encode(errorResponse(err))
 			return

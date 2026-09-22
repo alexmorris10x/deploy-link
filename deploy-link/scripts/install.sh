@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-module_version="0.10.0"
+module_version="0.10.1"
 go_version="1.26.5"
 pairing_helper_version="11.15.5"
 go_archive_sha256="efb87ff28af9a188d0536ef5d42e63dd52ba8263cd7344a993cc48dd11dedb6a"

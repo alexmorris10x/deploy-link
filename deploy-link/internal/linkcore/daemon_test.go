@@ -2,13 +2,124 @@ package linkcore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestDirectInstallStreamsPayloadProgress(t *testing.T) {
+	daemon := testDaemon(t)
+	daemon.validateApp = func(context.Context, string) (AppBundle, error) {
+		return AppBundle{Path: "/tmp/Test.app", BundleIdentifier: "one.example.test"}, nil
+	}
+	now := time.Unix(1_800_000_000, 0)
+	daemon.now = func() time.Time { return now }
+	daemon.session = &fakeSession{install: func(_ context.Context, _ AppBundle, progress func(int, string), transferProgress func(string, uint64, uint64), _ time.Duration) error {
+		transferProgress("zip_payload", 50, 100)
+		now = now.Add(2 * time.Second)
+		transferProgress("zip_payload", 75, 100)
+		progress(20, "InspectingPackage")
+		return nil
+	}}
+	daemon.state = StateActive
+
+	server, client := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		daemon.handleConnection(context.Background(), server)
+		close(done)
+	}()
+	defer client.Close()
+	if err := json.NewEncoder(client).Encode(Request{Command: "install", AppPath: "/tmp/Test.app"}); err != nil {
+		t.Fatal(err)
+	}
+	decoder := json.NewDecoder(client)
+	var responses []Response
+	for {
+		var response Response
+		if err := decoder.Decode(&response); err != nil {
+			t.Fatal(err)
+		}
+		responses = append(responses, response)
+		if response.Final {
+			break
+		}
+	}
+	if len(responses) != 5 {
+		t.Fatalf("responses = %#v, want accepted, two transfer updates, device progress, and installed", responses)
+	}
+	first := responses[1]
+	if first.Event != "install_transfer" || first.Phase != "zip_payload" || first.Percent != 50 || first.BytesSent != 50 || first.BytesTotal != 100 {
+		t.Fatalf("first transfer response = %#v", first)
+	}
+	second := responses[2]
+	if second.Event != "install_transfer" || second.Percent != 75 || second.ElapsedMS != 2000 || second.ThroughputBPS != 37 {
+		t.Fatalf("second transfer response = %#v", second)
+	}
+	if responses[3].Event != "progress" || responses[3].Status != "InspectingPackage" {
+		t.Fatalf("device progress response = %#v", responses[3])
+	}
+	if responses[4].Event != "installed" || !responses[4].Final {
+		t.Fatalf("final response = %#v", responses[4])
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("connection handler did not finish")
+	}
+}
+
+func TestDirectInstallCancellationStopsDaemonOperation(t *testing.T) {
+	daemon := testDaemon(t)
+	daemon.validateApp = func(context.Context, string) (AppBundle, error) {
+		return AppBundle{Path: "/tmp/Test.app", BundleIdentifier: "one.example.test"}, nil
+	}
+	cancelled := make(chan struct{})
+	daemon.session = &fakeSession{install: func(ctx context.Context, _ AppBundle, _ func(int, string), _ func(string, uint64, uint64), _ time.Duration) error {
+		<-ctx.Done()
+		close(cancelled)
+		return coded("install_failed", "cancelled", ctx.Err())
+	}}
+	daemon.state = StateActive
+
+	server, client := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		daemon.handleConnection(context.Background(), server)
+		close(done)
+	}()
+	if err := json.NewEncoder(client).Encode(Request{Command: "install", AppPath: "/tmp/Test.app"}); err != nil {
+		t.Fatal(err)
+	}
+	var accepted Response
+	if err := json.NewDecoder(client).Decode(&accepted); err != nil {
+		t.Fatal(err)
+	}
+	if accepted.Event != "accepted" {
+		t.Fatalf("first response = %#v, want accepted", accepted)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("client disconnect did not cancel the install")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("connection handler did not finish after cancellation")
+	}
+	if got := daemon.Snapshot(); got.State != StateActive || got.InstallCount != 0 {
+		t.Fatalf("daemon after client cancellation = %#v, want active without an install", got)
+	}
+}
 
 type fakeSession struct {
 	closed  atomic.Int32

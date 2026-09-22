@@ -204,6 +204,11 @@ attempts. It retries only while the same warm session and generation remain
 active; stalls, device rejections, cancellations, and terminal job failures are
 not retried automatically.
 
+Direct installs stream `install_transfer` JSON records while the payload is in
+flight. Each record includes the phase, byte counts, percentage, elapsed time,
+and average throughput. Cancelling or disconnecting the direct-install client
+cancels only that install operation and leaves the warm outer session active.
+
 An install is successful only when the command reaches `InstallComplete`, then
 InstallationProxy reads back the same bundle identifier, version, and build
 from the device. Deploy Link then returns an `installed` event. Opening the app

@@ -33,6 +33,11 @@ type Response struct {
 	InstallCount  uint64 `json:"install_count,omitempty"`
 	Percent       int    `json:"percent,omitempty"`
 	Status        string `json:"status,omitempty"`
+	Phase         string `json:"phase,omitempty"`
+	BytesSent     uint64 `json:"bytes_sent,omitempty"`
+	BytesTotal    uint64 `json:"bytes_total,omitempty"`
+	ElapsedMS     int64  `json:"elapsed_ms,omitempty"`
+	ThroughputBPS uint64 `json:"throughput_bps,omitempty"`
 	ErrorCode     string `json:"error_code,omitempty"`
 	Error         string `json:"error,omitempty"`
 	LastErrorCode string `json:"last_error_code,omitempty"`
