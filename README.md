@@ -295,3 +295,27 @@ Deploy Link and its Link Core dependency retain their licenses and notices
 inside [`deploy-link/`](deploy-link/). The on-device reflector is based on
 [LocalDevVPN](https://github.com/jkcoxson/LocalDevVPN). See
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+## Status app and local verification
+
+The status app provides **Import Profile**, a setup guide, and **Choose App…**
+(⌘O) alongside drag and drop. Profile imports validate the schema and pairing
+record locally before saving an owner-only copy. Invalid existing profiles
+remain visible as actionable errors. Snapshot preparation shows progress and
+can be cancelled; once a job has been submitted, refresh its receipt to check
+its state. Cancelling a client command preserves the warm device bridge.
+
+Status refreshes read the owner-only daemon socket directly. Completed receipts
+are cached, with active/latest receipts refreshed and a full reconciliation on
+manual Refresh, directory changes, or after one minute. Polling slows when the
+app is inactive. Subprocess output is drained while commands run, with a bounded
+256 KiB diagnostic tail and cancellation/deadline cleanup of their process group.
+
+Run `deploy-link/scripts/test.sh` for Go tests, the race detector, and vet.
+It prepares a checkout-specific Go workspace without installing or replacing
+the live CLI. `DEPLOY_LINK_BUILD_ROOT`, `DEPLOY_LINK_DOWNLOADS_DIR`,
+`DEPLOY_LINK_TOOLCHAINS_DIR`, `DEPLOY_LINK_SOURCES_DIR`, and standard Go cache
+variables support separate build volumes and shared pinned dependencies.
+Run `deploy-link/scripts/test-status-app.sh` for process, local socket, and
+receipt-cache fixtures; `TEST_BUILD_DIR` selects its output folder. These local
+checks do not establish physical-device or visual/accessibility acceptance.

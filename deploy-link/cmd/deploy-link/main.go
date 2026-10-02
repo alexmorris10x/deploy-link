@@ -74,6 +74,24 @@ func configure(arguments []string) error {
 	return nil
 }
 
+// validateProfile checks an imported profile without contacting a device or changing services.
+func validateProfile(arguments []string) error {
+	flags := flag.NewFlagSet("validate-profile", flag.ContinueOnError)
+	profile := flags.String("profile", "", "absolute profile path")
+	if err := flags.Parse(arguments); err != nil {
+		return err
+	}
+	config, err := linkcore.LoadConfig(*profile)
+	if err != nil {
+		return err
+	}
+	if err := linkcore.ValidatePairRecord(config); err != nil {
+		return err
+	}
+	emit(map[string]any{"ok": true, "event": "profile_valid", "schema_version": linkcore.SchemaVersion})
+	return nil
+}
+
 func doctor(arguments []string) error {
 	flags := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	profile := flags.String("profile", "", "absolute profile path")
@@ -286,9 +304,11 @@ func launchAgent(arguments []string) error {
 
 func run(arguments []string) error {
 	if len(arguments) == 0 {
-		return errors.New("command required: configure, doctor, serve, supervise, status, watch, install, job, stop, launch-agent, pair, version")
+		return errors.New("command required: configure, validate-profile, doctor, serve, supervise, status, watch, install, job, stop, launch-agent, pair, version")
 	}
 	switch arguments[0] {
+	case "validate-profile":
+		return validateProfile(arguments[1:])
 	case "configure":
 		return configure(arguments[1:])
 	case "doctor":

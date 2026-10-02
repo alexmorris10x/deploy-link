@@ -78,9 +78,10 @@ struct DeployLinkMenu: View {
                 }
             }
         }
-        if store.devices.isEmpty {
-            Text("No device profiles")
-        }
+        if store.devices.isEmpty { Text("No device profiles") }
+        Button("Import Profile…") { store.importProfile() }.disabled(store.isImporting)
+        Button("Setup Guide") { store.openSetupGuide() }
+        ForEach(store.profileErrors, id: \.self) { Text($0) }
         if let message = store.actionMessage {
             Divider()
             Text(message)
@@ -103,6 +104,11 @@ final class DeployLinkStore: ObservableObject {
     @Published var selectedDeviceID: String?
     @Published var alertMessage: String?
     @Published var actionMessage: String?
+    @Published private(set) var profileErrors: [String] = []
+    @Published private(set) var preparation: [String: String] = [:]
+    @Published private(set) var isImporting = false
+    private var commands: [String: Task<Void, Never>] = [:]
+    private var lastRefresh = Date.distantPast
 
     private let reader = DeployLinkStateReader()
     private let runner = DeployLinkCommandRunner()
@@ -112,17 +118,25 @@ final class DeployLinkStore: ObservableObject {
     init() {
         refresh()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+            Task { @MainActor in
+                guard let self else { return }
+                let visible = NSApp.windows.contains { $0.isVisible && !$0.isMiniaturized }
+                let interval: TimeInterval = visible || self.hasActiveTransfer || !self.busyDeviceIDs.isEmpty ? 2 : 15
+                if Date().timeIntervalSince(self.lastRefresh) >= interval { self.refresh(force: false) }
+            }
         }
     }
 
-    func refresh() {
+    func refresh(force: Bool = true) {
         guard !refreshInFlight else { return }
         refreshInFlight = true
+        lastRefresh = Date()
         Task {
-            let newDevices = await Task.detached(priority: .utility) { [reader] in
-                reader.readStatuses()
+            let result = await Task.detached(priority: .utility) { [reader] in
+                reader.readStatuses(force: force)
             }.value
+            profileErrors = result.errors
+            let newDevices = result.devices
             devices = newDevices
             if selectedDeviceID == nil || !newDevices.contains(where: { $0.id == selectedDeviceID }) {
                 selectedDeviceID = newDevices.first?.id
@@ -206,31 +220,78 @@ final class DeployLinkStore: ObservableObject {
         }
         guard !busyDeviceIDs.contains(device.id) else { return }
         busyDeviceIDs.insert(device.id)
-        Task {
+        preparation[device.id] = "Validating app signature…"
+        commands[device.id] = Task {
             do {
                 try await runner.validateSignedIOSApp(at: appURL)
+                try Task.checkCancellation()
+                preparation[device.id] = "Preparing and copying the app snapshot…"
                 _ = try await runner.run(["job", "submit", "--profile", device.profilePath, appURL.path])
+                actionMessage = "App submitted to \(device.deviceLabel)."
                 refresh()
-            } catch {
-                alertMessage = error.localizedDescription
-            }
+            } catch is CancellationError {
+                actionMessage = "UI command cancelled. The bridge stays running; refresh to check any job already submitted."
+            } catch { alertMessage = error.localizedDescription }
+            preparation.removeValue(forKey: device.id)
             busyDeviceIDs.remove(device.id)
+            commands.removeValue(forKey: device.id)
         }
     }
 
     private func run(device: DeviceInstallStatus, arguments: [String], successMessage: String) {
         guard !busyDeviceIDs.contains(device.id) else { return }
         busyDeviceIDs.insert(device.id)
-        Task {
+        commands[device.id] = Task {
             do {
                 _ = try await runner.run(arguments)
                 actionMessage = successMessage
                 refresh()
+            } catch is CancellationError {
+                actionMessage = "UI command cancelled; the device bridge is independent."
             } catch {
                 alertMessage = error.localizedDescription
                 actionMessage = error.localizedDescription
             }
             busyDeviceIDs.remove(device.id)
+            commands.removeValue(forKey: device.id)
+        }
+    }
+
+    func cancel(_ device: DeviceInstallStatus) { commands[device.id]?.cancel() }
+    func chooseApp() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose a signed iOS app"
+        panel.allowedContentTypes = [.applicationBundle]
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.treatsFilePackagesAsDirectories = false
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let url = panel.url { submit(url) }
+    }
+    func openSetupGuide() {
+        NSWorkspace.shared.open(URL(string: "https://github.com/alexmorris10x/deploy-link#pair-and-configure-each-device")!)
+    }
+    func importProfile() {
+        let panel = NSOpenPanel(); panel.title = "Import a Deploy Link profile"
+        panel.allowedContentTypes = [.json]; panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let source = panel.url else { return }
+        isImporting = true
+        Task {
+            let home = FileManager.default.homeDirectoryForCurrentUser
+            let root = home.appendingPathComponent(".local/share/deploy-link/profiles", isDirectory: true)
+            let temporary = root.appendingPathComponent(".import-" + UUID().uuidString + ".pending")
+            defer { try? FileManager.default.removeItem(at: temporary); isImporting = false }
+            do {
+                try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+                let data = try Data(contentsOf: source)
+                _ = try JSONDecoder().decode(DeployLinkProfile.self, from: data)
+                guard FileManager.default.createFile(atPath: temporary.path, contents: data, attributes: [.posixPermissions: 0o600]) else { throw DeployLinkAppError("Could not stage the imported profile.") }
+                _ = try await runner.run(["validate-profile", "--profile", temporary.path])
+                let destination = root.appendingPathComponent(source.deletingPathExtension().lastPathComponent + "-" + UUID().uuidString.prefix(8) + ".json")
+                try FileManager.default.moveItem(at: temporary, to: destination)
+                actionMessage = "Profile imported. Select Start when the device is ready."
+                refresh()
+            } catch { alertMessage = "Profile import failed: " + error.localizedDescription }
         }
     }
 }
@@ -301,12 +362,20 @@ struct DeployLinkDashboard: View {
     @ViewBuilder
     private var deviceSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Devices").font(.headline)
+            HStack {
+                Text("Devices").font(.headline)
+                Spacer()
+                Button("Import Profile…") { store.importProfile() }.disabled(store.isImporting)
+                Button("Setup Guide") { store.openSetupGuide() }
+            }
+            ForEach(store.profileErrors, id: \.self) { error in
+                Label(error, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red).textSelection(.enabled)
+            }
             if store.devices.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "iphone.slash").font(.largeTitle).foregroundStyle(.secondary)
                     Text("No Device Profiles").font(.headline)
-                    Text("Configure a Deploy Link profile before using the app.")
+                    Text("Use the setup guide to pair a device, then import its profile.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, minHeight: 170)
@@ -316,7 +385,9 @@ struct DeployLinkDashboard: View {
                         device: device,
                         isBusy: store.busyDeviceIDs.contains(device.id),
                         start: { store.start(device) },
-                        stop: { pendingStop = device }
+                        stop: { pendingStop = device },
+                        cancel: { store.cancel(device) },
+                        preparation: store.preparation[device.id]
                     )
                 }
             }
@@ -343,6 +414,9 @@ struct DeployLinkDashboard: View {
                         .font(.system(size: 32))
                         .foregroundStyle(isDropTargeted ? Color.accentColor : .secondary)
                     Text("Drop a signed iOS .app here").font(.headline)
+                    Button("Choose App…") { store.chooseApp() }
+                        .keyboardShortcut("o", modifiers: .command)
+                        .disabled(store.selectedDeviceID == nil || store.busyDeviceIDs.contains(store.selectedDeviceID ?? ""))
                     Text("Deploy Link validates the bundle and submits a durable install job.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
@@ -426,6 +500,8 @@ struct DeviceCard: View {
     let isBusy: Bool
     let start: () -> Void
     let stop: () -> Void
+    let cancel: () -> Void
+    let preparation: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -442,13 +518,17 @@ struct DeviceCard: View {
                     }
                 }
                 Spacer()
-                if isBusy { ProgressView().controlSize(.small) }
+                if isBusy {
+                    ProgressView().controlSize(.small)
+                    Button("Cancel", action: cancel).help("Cancel this UI command; keep the device bridge running")
+                }
                 if device.serviceEnabled {
                     Button("Stop", role: .destructive, action: stop).disabled(isBusy)
                 } else {
                     Button("Start", action: start).buttonStyle(.borderedProminent).disabled(isBusy)
                 }
             }
+            if let preparation { ProgressView(preparation).progressViewStyle(.linear) }
             if let job = device.job, job.shouldShowInDashboard {
                 Divider()
                 HStack {
@@ -716,94 +796,64 @@ private struct BridgeSnapshot {
     let lastErrorCode: String?
 }
 
-struct DeployLinkStateReader {
+final class DeployLinkStateReader: @unchecked Sendable {
     private let fileManager = FileManager.default
     private let decoder = JSONDecoder()
+    private var serviceCache: [String: (Date, Bool)] = [:]
+    private let receipts = ReceiptCache<InstallJobReceipt>(updated: { parseDeployLinkDate($0.updatedAt) ?? .distantPast }, active: { $0.isActive })
 
-    func readStatuses() -> [DeviceInstallStatus] {
-        profileURLs().compactMap { profileURL in
-            guard let data = try? Data(contentsOf: profileURL),
-                  let profile = try? decoder.decode(DeployLinkProfile.self, from: data) else { return nil }
+    func readStatuses(force: Bool = false) -> (devices: [DeviceInstallStatus], errors: [String]) {
+        var errors: [String] = []
+        let devices = profileURLs().compactMap { profileURL -> DeviceInstallStatus? in
+            let profile: DeployLinkProfile
+            do {
+                profile = try decoder.decode(DeployLinkProfile.self, from: Data(contentsOf: profileURL))
+                guard !profile.deviceLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw DeployLinkAppError("device_label is empty") }
+            } catch {
+                errors.append("Unreadable profile: " + profileURL.path + ". Repair its JSON/device_label or remove it from the profiles folder.")
+                return nil
+            }
             let stem = profileURL.deletingPathExtension().lastPathComponent
             let jobsRoot = profileURL.deletingLastPathComponent().appendingPathComponent(".\(stem)-install-jobs", isDirectory: true)
-            let enabled = launchAgentIsLoaded(profilePath: profileURL.path)
-            let snapshot = enabled ? bridgeSnapshot(profilePath: profileURL.path) : nil
-            return DeviceInstallStatus(
-                id: profileURL.path,
-                profilePath: profileURL.path,
-                deviceLabel: profile.deviceLabel,
-                serviceEnabled: enabled,
-                bridgeState: snapshot?.state,
-                lastErrorCode: snapshot?.lastErrorCode,
-                job: latestReceipt(in: jobsRoot)
-            )
-        }
-        .sorted { left, right in
+            let snapshot = bridgeSnapshot(profileURL: profileURL)
+            let enabled = snapshot != nil || launchAgentIsLoaded(profilePath: profileURL.path, force: force)
+            return DeviceInstallStatus(id: profileURL.path, profilePath: profileURL.path, deviceLabel: profile.deviceLabel,
+                serviceEnabled: enabled, bridgeState: snapshot?.state, lastErrorCode: snapshot?.lastErrorCode,
+                job: receipts.latest(in: jobsRoot, force: force))
+        }.sorted { left, right in
             if left.job?.isActive != right.job?.isActive { return left.job?.isActive == true }
             return left.deviceLabel.localizedCaseInsensitiveCompare(right.deviceLabel) == .orderedAscending
         }
+        return (devices, errors)
     }
 
     private func profileURLs() -> [URL] {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let roots = [
-            home.appendingPathComponent(".local/share/deploy-link/profiles", isDirectory: true),
-            home.appendingPathComponent("Library/Application Support/Deploy Link/profiles", isDirectory: true)
-        ]
+        let roots = [home.appendingPathComponent(".local/share/deploy-link/profiles", isDirectory: true), home.appendingPathComponent("Library/Application Support/Deploy Link/profiles", isDirectory: true)]
         var seen: Set<String> = []
         return roots.flatMap { root in
             (try? fileManager.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles])) ?? []
-        }
-        .filter { $0.pathExtension == "json" && seen.insert($0.path).inserted }
+        }.filter { $0.pathExtension == "json" && seen.insert($0.path).inserted }
     }
 
-    private func launchAgentIsLoaded(profilePath: String) -> Bool {
+    private func launchAgentIsLoaded(profilePath: String, force: Bool) -> Bool {
+        if !force, let cached = serviceCache[profilePath], Date().timeIntervalSince(cached.0) < 30 { return cached.1 }
         let standardizedPath = URL(fileURLWithPath: profilePath).standardizedFileURL.path
         let digest = SHA256.hash(data: Data(standardizedPath.utf8))
         let profileID = digest.prefix(16).map { String(format: "%02x", $0) }.joined()
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        process.arguments = ["print", "gui/\(getuid())/one.zjz.deploy-link.\(profileID)"]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-            process.waitUntilExit()
-            return process.terminationStatus == 0
-        } catch {
-            return false
-        }
+        let result = try? BoundedProcess.run(executable: URL(fileURLWithPath: "/bin/launchctl"), arguments: ["print", "gui/\(getuid())/one.zjz.deploy-link.\(profileID)"], timeout: 2)
+        let loaded = result?.status == 0
+        serviceCache[profilePath] = (Date(), loaded)
+        return loaded
     }
 
-    private func bridgeSnapshot(profilePath: String) -> BridgeSnapshot? {
-        guard let binary = DeployLinkCommandRunner.binaryURL() else { return nil }
-        let process = Process()
-        let output = Pipe()
-        process.executableURL = binary
-        process.arguments = ["status", "--profile", profilePath]
-        process.standardOutput = output
-        process.standardError = output
-        do {
-            try process.run()
-            process.waitUntilExit()
-            let data = output.fileHandleForReading.readDataToEndOfFile()
-            guard process.terminationStatus == 0,
-                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-            guard let state = object["state"] as? String else { return nil }
-            return BridgeSnapshot(state: state, lastErrorCode: object["last_error_code"] as? String)
-        } catch { return nil }
-    }
-
-    private func latestReceipt(in jobsRoot: URL) -> InstallJobReceipt? {
-        guard let jobDirectories = try? fileManager.contentsOfDirectory(at: jobsRoot, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { return nil }
-        return jobDirectories.compactMap { directory in
-            let receiptURL = directory.appendingPathComponent("receipt.json")
-            guard let data = try? Data(contentsOf: receiptURL) else { return nil }
-            return try? decoder.decode(InstallJobReceipt.self, from: data)
-        }
-        .max { left, right in
-            (parseDeployLinkDate(left.updatedAt) ?? .distantPast) < (parseDeployLinkDate(right.updatedAt) ?? .distantPast)
-        }
+    private func bridgeSnapshot(profileURL: URL) -> BridgeSnapshot? {
+        let socket = profileURL.deletingPathExtension().appendingPathExtension("sock").path
+        guard let data = LocalStatusSocket.read(path: socket),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["ok"] as? Bool == true, object["final"] as? Bool == true,
+              object["control_schema"] as? Int == 2, let state = object["state"] as? String else { return nil }
+        return BridgeSnapshot(state: state, lastErrorCode: object["last_error_code"] as? String)
     }
 }
 
@@ -841,28 +891,13 @@ struct DeployLinkCommandRunner {
     }
 
     private func run(executable: URL, arguments: [String]) async throws -> Data {
-        try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                let process = Process()
-                let output = Pipe()
-                process.executableURL = executable
-                process.arguments = arguments
-                process.standardOutput = output
-                process.standardError = output
-                do {
-                    try process.run()
-                    process.waitUntilExit()
-                    let data = output.fileHandleForReading.readDataToEndOfFile()
-                    guard process.terminationStatus == 0 else {
-                        continuation.resume(throwing: DeployLinkAppError(Self.safeErrorMessage(from: data)))
-                        return
-                    }
-                    continuation.resume(returning: data)
-                } catch {
-                    continuation.resume(throwing: DeployLinkAppError(error.localizedDescription))
-                }
-            }
+        let timeout: TimeInterval = arguments.starts(with: ["job", "submit"]) ? 600 : (arguments.starts(with: ["pair", "repair"]) ? 180 : 30)
+        let result = try await BoundedProcess.runAsync(executable: executable, arguments: arguments, timeout: timeout)
+        guard result.status == 0 else {
+            throw DeployLinkAppError("\(executable.lastPathComponent) exited with status \(result.status). " + Self.safeErrorMessage(from: result.data))
         }
+        guard !result.truncated else { throw DeployLinkAppError("Command output exceeded the diagnostic limit. Refresh to check its result.") }
+        return result.data
     }
 
     private static func safeErrorMessage(from data: Data) -> String {

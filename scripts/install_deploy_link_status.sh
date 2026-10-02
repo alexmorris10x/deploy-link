@@ -38,7 +38,7 @@ mkdir -p "${stage_app}/Contents/Resources"
   -framework CryptoKit \
   -framework SwiftUI \
   -framework UniformTypeIdentifiers \
-  "${source_root}/DeployLinkStatusApp.swift" \
+  "${source_root}"/*.swift \
   -o "${stage_app}/Contents/MacOS/DeployLink"
 /bin/cp "${source_root}/Info.plist" "${stage_app}/Contents/Info.plist"
 /bin/cp "${source_root}/Resources/AppIcon.icns" "${stage_app}/Contents/Resources/AppIcon.icns"

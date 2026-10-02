@@ -2,6 +2,13 @@
 
 set -euo pipefail
 
+prepare_only=0
+if [[ "${1:-}" == "--prepare-only" && "$#" == 1 ]]; then
+  prepare_only=1
+elif [[ "$#" != 0 ]]; then
+  printf 'Usage: install.sh [--prepare-only]\n' >&2
+  exit 1
+fi
 module_version="0.10.1"
 go_version="1.26.5"
 pairing_helper_version="11.15.5"
@@ -14,15 +21,15 @@ module_directory="$(cd "${script_directory}/.." && pwd -P)"
 patch_path="${module_directory}/patches/link-core-tailnet.patch"
 : "${HOME:?HOME must be set}"
 runtime_root="${DEPLOY_LINK_RUNTIME_ROOT:-${HOME}/Library/Application Support/Deploy Link}"
-build_root="${runtime_root}/build"
-downloads_directory="${build_root}/downloads"
-toolchains_directory="${build_root}/toolchains"
-sources_directory="${build_root}/sources"
+build_root="${DEPLOY_LINK_BUILD_ROOT:-${runtime_root}/build}"
+downloads_directory="${DEPLOY_LINK_DOWNLOADS_DIR:-${build_root}/downloads}"
+toolchains_directory="${DEPLOY_LINK_TOOLCHAINS_DIR:-${build_root}/toolchains}"
+sources_directory="${DEPLOY_LINK_SOURCES_DIR:-${build_root}/sources}"
 workspaces_directory="${build_root}/workspaces"
 cache_directory="${build_root}/cache"
-go_path="${cache_directory}/gopath"
-go_build_cache="${cache_directory}/go-build"
-go_module_cache="${cache_directory}/go-mod"
+go_path="${GOPATH:-${cache_directory}/gopath}"
+go_build_cache="${GOCACHE:-${cache_directory}/go-build}"
+go_module_cache="${GOMODCACHE:-${cache_directory}/go-mod}"
 binary_directory="${runtime_root}/bin"
 pairing_tool_root="${runtime_root}/tools/pymobiledevice3-${pairing_helper_version}"
 
@@ -37,36 +44,41 @@ require_command() {
 
 [[ "$(uname -s)" == "Darwin" ]] || fail "macOS is required"
 [[ "$(uname -m)" == "arm64" ]] || fail "Apple silicon is required"
-for command_name in curl git shasum tar uv; do
+for command_name in curl git shasum tar; do
   require_command "${command_name}"
 done
+if [[ "${prepare_only}" -eq 0 ]]; then require_command uv; fi
 [[ -f "${patch_path}" ]] || fail "downstream Link Core patch is missing"
 
 umask 077
-mkdir -p "${runtime_root}" "${build_root}" "${downloads_directory}" \
+mkdir -p "${build_root}" "${downloads_directory}" \
   "${toolchains_directory}" "${sources_directory}" "${workspaces_directory}" \
-  "${go_path}" "${go_build_cache}" "${go_module_cache}" "${cache_directory}/uv" \
-  "${binary_directory}" "${pairing_tool_root}/bin" "${pairing_tool_root}/envs"
-chmod 0700 "${runtime_root}" "${build_root}" "${downloads_directory}" \
+  "${go_path}" "${go_build_cache}" "${go_module_cache}" "${cache_directory}/uv"
+chmod 0700 "${build_root}" "${downloads_directory}" \
   "${toolchains_directory}" "${sources_directory}" "${workspaces_directory}" \
   "${cache_directory}" "${go_path}" "${go_build_cache}" "${go_module_cache}" \
-  "${cache_directory}/uv" "${binary_directory}" "${pairing_tool_root}" \
-  "${pairing_tool_root}/bin" "${pairing_tool_root}/envs"
+  "${cache_directory}/uv"
+if [[ "${prepare_only}" -eq 0 ]]; then
+  mkdir -p "${binary_directory}" "${pairing_tool_root}/bin" "${pairing_tool_root}/envs"
+  chmod 0700 "${runtime_root}" "${binary_directory}" "${pairing_tool_root}" \
+    "${pairing_tool_root}/bin" "${pairing_tool_root}/envs"
+fi
 
 # Keep all Go-generated state inside Deploy Link's rebuildable runtime cache.
 export GOPATH="${go_path}"
 export GOCACHE="${go_build_cache}"
 export GOMODCACHE="${go_module_cache}"
 
-if [[ ! -x "${pairing_tool_root}/bin/pymobiledevice3" ]]; then
+if [[ "${prepare_only}" -eq 0 && ! -x "${pairing_tool_root}/bin/pymobiledevice3" ]]; then
   UV_TOOL_DIR="${pairing_tool_root}/envs" \
   UV_TOOL_BIN_DIR="${pairing_tool_root}/bin" \
   UV_PYTHON_INSTALL_DIR="${pairing_tool_root}/python" \
   UV_CACHE_DIR="${cache_directory}/uv" \
     uv tool install --python 3.13 --no-progress "pymobiledevice3==${pairing_helper_version}"
 fi
-[[ -x "${pairing_tool_root}/bin/pymobiledevice3" ]] \
-  || fail "pinned pymobiledevice3 helper was not installed"
+if [[ "${prepare_only}" -eq 0 ]]; then
+  [[ -x "${pairing_tool_root}/bin/pymobiledevice3" ]] || fail "pinned pymobiledevice3 helper was not installed"
+fi
 
 staging_root="$(mktemp -d "${build_root}/.install.XXXXXX")"
 cleanup() {
@@ -128,7 +140,8 @@ git -C "${source_root}" apply --unidiff-zero --reverse --check "${patch_path}" \
   || fail "cached Link Core source does not contain exactly the required patch"
 git -C "${source_root}" diff --check
 
-workspace_root="${workspaces_directory}/${patch_sha256}"
+checkout_sha256="$(printf '%s' "${module_directory}" | shasum -a 256 | awk '{print $1}')"
+workspace_root="${workspaces_directory}/${patch_sha256}-${checkout_sha256}"
 workspace_file="${workspace_root}/go.work"
 if [[ -e "${workspace_root}" && ! -f "${workspace_file}" ]]; then
   fail "cached Go workspace is incomplete: ${workspace_root}"
@@ -146,6 +159,11 @@ grep -Fq "${module_directory}" "${workspace_file}" \
   || fail "cached Go workspace points at a different Deploy Link module"
 grep -Fq "${source_root}" "${workspace_file}" \
   || fail "cached Go workspace points at a different Link Core source"
+
+if [[ "${prepare_only}" -eq 1 ]]; then
+  printf 'Prepared test workspace: %s\n' "${workspace_file}"
+  exit 0
+fi
 
 staged_binary="${staging_root}/deploy-link"
 ldflags="-s -w -X main.version=${module_version} -X main.linkCoreCommit=${link_core_commit} -X main.patchSHA=${patch_sha256}"
