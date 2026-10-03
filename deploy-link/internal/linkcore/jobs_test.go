@@ -419,6 +419,62 @@ func TestReconcileRunningInstallJobMarksDaemonRestartInterrupted(t *testing.T) {
 	}
 }
 
+func TestActiveInstallJobIgnoresLaunchdLogDirectoryWithoutReceipt(t *testing.T) {
+	profilePath := filepath.Join(t.TempDir(), "profiles", "iphone.json")
+	job := testInstallJob(t, profilePath, InstallJobStateRunning)
+	if err := writeInstallJob(profilePath, job); err != nil {
+		t.Fatal(err)
+	}
+	// A leftover one-shot LaunchAgent makes launchd recreate a removed job
+	// directory that holds only its worker log and no receipt.
+	orphan, err := installJobDirectory(profilePath, "00000000000000000000000000000000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(orphan, 0o744); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(orphan, "worker.log"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	active, found, err := activeInstallJob(profilePath)
+	if err != nil || !found || active.ID != job.ID {
+		t.Fatalf("activeInstallJob = %q, %v, %v; want running job beside orphan", active.ID, found, err)
+	}
+	if err := reconcileRunningInstallJob(profilePath); err != nil {
+		t.Fatalf("daemon startup reconciliation failed on orphan directory: %v", err)
+	}
+}
+
+func TestRunInstallJobRetiresOneShotLaunchAgentFile(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	profilePath := filepath.Join(t.TempDir(), "profiles", "iphone.json")
+	job := testInstallJob(t, profilePath, InstallJobStateFailed)
+	if err := writeInstallJob(profilePath, job); err != nil {
+		t.Fatal(err)
+	}
+	spec, err := installJobLaunchAgentSpecForProfile(profilePath, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(spec.plistPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(spec.plistPath, []byte("plist"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// A login reruns every RunAtLoad agent whose file remains, including
+	// workers for long-finished jobs.
+	if _, err := RunInstallJob(context.Background(), profilePath, job.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(spec.plistPath); !os.IsNotExist(err) {
+		t.Fatalf("one-shot LaunchAgent file still present after worker ran: %v", err)
+	}
+}
+
 func TestInstallJobTerminalCompareAndSwapPreservesNewRunningClaim(t *testing.T) {
 	profilePath := filepath.Join(t.TempDir(), "profiles", "iphone.json")
 	staleQueued := testInstallJob(t, profilePath, InstallJobStateQueued)

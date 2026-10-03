@@ -396,6 +396,12 @@ func activeInstallJob(profilePath string) (InstallJob, bool, error) {
 			continue
 		}
 		job, err := readInstallJobRecord(profilePath, entry.Name())
+		if errorCode(err) == "job_not_found" {
+			// Jobs are published from staging with their receipt, so a directory
+			// without one is not a job; launchd recreates removed job directories
+			// for a leftover one-shot worker's log path.
+			continue
+		}
 		if err != nil {
 			return InstallJob{}, false, err
 		}
@@ -827,6 +833,7 @@ func storedInstallJobError(job InstallJob) error {
 }
 
 func RunInstallJob(ctx context.Context, profilePath string, jobID string, onResponse func(Response)) (InstallJob, error) {
+	retireInstallJobLaunchAgentFile(profilePath, jobID)
 	workerLockPath, err := installJobWorkerLockPath(profilePath, jobID)
 	if err != nil {
 		return InstallJob{}, err
@@ -884,6 +891,18 @@ func RunInstallJob(ctx context.Context, profilePath string, jobID string, onResp
 		return latest, coded("job_proof_failed", "daemon returned without a durable install receipt", nil)
 	}
 	return latest, nil
+}
+
+// retireInstallJobLaunchAgentFile removes the one-shot worker's plist once
+// launchd has started it. launchd keeps the loaded service for this session,
+// and a remaining RunAtLoad file would rerun the worker at every login. A
+// failed removal only leaves a harmless rerun, so it does not block the job.
+func retireInstallJobLaunchAgentFile(profilePath string, jobID string) {
+	spec, err := installJobLaunchAgentSpecForProfile(profilePath, jobID)
+	if err != nil {
+		return
+	}
+	_ = os.Remove(spec.plistPath)
 }
 
 func removeInstallJobLaunchAgent(profilePath string, jobID string) error {
