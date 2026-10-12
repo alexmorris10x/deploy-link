@@ -21,6 +21,11 @@ targets:
     sources:
       - path: XcodeCellularProbe
     settings:
+      configs:
+        Debug:
+          ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon-Dev
+        Release:
+          EXCLUDED_SOURCE_FILE_NAMES: DevAssets.xcassets
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.10x.xcodecellularprobe
         INFOPLIST_FILE: XcodeCellularProbe/Info.plist

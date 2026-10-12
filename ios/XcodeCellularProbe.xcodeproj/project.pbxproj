@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		0CBD528B43EEF2E0E83995B1 /* LockdownProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CF527884B6BDB7D32CEFE79 /* LockdownProbe.swift */; };
+		10333BF4E31340514B5E5840 /* DevAssets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 5C1F5884AE2D981C088E43C9 /* DevAssets.xcassets */; };
 		347F44D507303EF863529BCB /* RemotePairingProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 575CC49C694A805A1F5ED5B7 /* RemotePairingProbe.swift */; };
 		3A83FB0308B79A24ACCCBCA7 /* XcodeCellularProbeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 109DC092E4162FB79EA841CF /* XcodeCellularProbeApp.swift */; };
 		3B20C6CFBEF46170F495E92E /* PrototypeModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DA1F30FBF85C004F44E3544 /* PrototypeModel.swift */; };
@@ -48,6 +49,7 @@
 		4619381A382C29DA091FAC1D /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
 		4CF527884B6BDB7D32CEFE79 /* LockdownProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LockdownProbe.swift; sourceTree = "<group>"; };
 		575CC49C694A805A1F5ED5B7 /* RemotePairingProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemotePairingProbe.swift; sourceTree = "<group>"; };
+		5C1F5884AE2D981C088E43C9 /* DevAssets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = DevAssets.xcassets; sourceTree = "<group>"; };
 		687B8600695E220FCEA68CD7 /* XcodeCellularProbe.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = XcodeCellularProbe.entitlements; sourceTree = "<group>"; };
 		6BC6FD588DD2315E2EB5CAF1 /* XcodeCellularTunnel.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = XcodeCellularTunnel.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		7DA1F30FBF85C004F44E3544 /* PrototypeModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrototypeModel.swift; sourceTree = "<group>"; };
@@ -62,6 +64,7 @@
 			isa = PBXGroup;
 			children = (
 				95B88B3FBB297B5D0B94588E /* ContentView.swift */,
+				5C1F5884AE2D981C088E43C9 /* DevAssets.xcassets */,
 				BD784292E5010FAEF04EF72F /* Info.plist */,
 				4CF527884B6BDB7D32CEFE79 /* LockdownProbe.swift */,
 				A3D0CAE4579E3750F8C666D4 /* ProbeDiagnostics.swift */,
@@ -126,6 +129,7 @@
 			buildConfigurationList = 350889AEE14BF499A6644FC3 /* Build configuration list for PBXNativeTarget "XcodeCellularProbe" */;
 			buildPhases = (
 				000E41E0CDC5DC79F1B8DDCB /* Sources */,
+				E54BACF41F6198B0F97D5706 /* Resources */,
 				91F55620080F21C724C198EE /* Embed Foundation Extensions */,
 			);
 			buildRules = (
@@ -160,7 +164,6 @@
 				};
 			};
 			buildConfigurationList = 5B8ECF97CC475416D50AA755 /* Build configuration list for PBXProject "XcodeCellularProbe" */;
-			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -170,6 +173,7 @@
 			mainGroup = 5C19982E718B5734CC48A70C;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
+			productRefGroup = EBB18EED6284753A77A4C7F2 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -178,6 +182,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		E54BACF41F6198B0F97D5706 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				10333BF4E31340514B5E5840 /* DevAssets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		000E41E0CDC5DC79F1B8DDCB /* Sources */ = {
@@ -342,7 +357,7 @@
 		34063F4E6885512B87CAE116 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon-Dev";
 				CODE_SIGN_ENTITLEMENTS = XcodeCellularProbe/XcodeCellularProbe.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				INFOPLIST_FILE = XcodeCellularProbe/Info.plist;
@@ -400,6 +415,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = XcodeCellularProbe/XcodeCellularProbe.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				EXCLUDED_SOURCE_FILE_NAMES = DevAssets.xcassets;
 				INFOPLIST_FILE = XcodeCellularProbe/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
