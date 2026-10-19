@@ -30,12 +30,18 @@ struct ReleaseListView: View {
         }
     }
 
+    private var checking: some View {
+        ProgressView("Checking the Mac…")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     @ViewBuilder
     private var content: some View {
         switch store.state {
-        case .idle, .loading where store.releases.isEmpty:
-            ProgressView("Checking the Mac…")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .idle:
+            checking
+        case .loading where store.releases.isEmpty:
+            checking
         case .failed(let message) where store.releases.isEmpty:
             ContentUnavailableView {
                 Label("Can't load builds", systemImage: "wifi.exclamationmark")

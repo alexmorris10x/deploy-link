@@ -269,15 +269,54 @@ messages can still contain private local paths or network identifiers. If an
 install stops, preserve the warm daemon and inspect the final safe phase before
 changing a timeout, restarting, or trying a different delivery method.
 
-## Private OTA fallback
+## Install queue and iPhone app (no warm session needed)
 
-[`ota/ota_release.py`](ota/ota_release.py) provides an independent registered-device
-OTA lane through private Tailscale HTTPS. It is useful when no warm session is
-available, but it requires an install tap and does not provide debugging or
-console access.
+When the warm session is cold (the device left Wi-Fi and Apple closed its
+listener), builds can still reach a registered iPhone or iPad over Wi-Fi or
+cellular through Apple's over-the-air install. Nothing here uses
+RemotePairing; the device only needs Tailscale connected.
 
-Generated OTA data belongs under `~/.local/share/ios-ota/`, not in the
-repository. Do not use Tailscale Funnel for private development builds.
+```text
+signed .app -> ota-queue publish -> ~/.local/share/ios-ota/queue/<id>/
+                                          |
+        loopback server :8477 <- tailscale serve (tailnet-only HTTPS)
+                                          |
+          Deploy Link iPhone app -> Install -> iOS prompt -> download + install
+```
+
+- [`ota/ota_queue.py`](ota/ota_queue.py) packages a signed device `.app` (or
+  takes an `.ipa`), records its identity and provisioning profile, keeps the
+  newest five releases per app, and serves `/api/releases`, per-release
+  manifests, icons and IPAs, plus an HTML list at `/` as a browser fallback.
+  Each completed IPA download is appended to the release's `downloads.jsonl`,
+  which is the Mac-side evidence that a device fetched the build.
+- [`scripts/install_ota_queue.sh`](scripts/install_ota_queue.sh) installs it as
+  `~/.local/share/deploy-link/bin/ota-queue` with the `com.10x.deploy-link-ota`
+  LaunchAgent and makes sure `tailscale serve` proxies the Mac's tailnet HTTPS
+  address to port 8477. Rerun it after changing the script.
+- [`companion/`](companion/) is the Deploy Link iPhone app
+  (`com.10x.deploylink`, XcodeGen `project.yml`). It lists the queue, refreshes
+  every 15 seconds while open, and hands a release's `itms-services` link to
+  iOS. It marks the build it is running, so publishing a newer build of the
+  companion itself is the end-to-end test.
+
+```sh
+ota=~/.local/share/deploy-link/bin/ota-queue
+"$ota" publish /path/to/App.app --note "What changed"
+"$ota" list      # newest first, with download counts
+"$ota" remove <release-id>
+```
+
+iOS always asks for one confirmation per install. Only devices in the app's
+provisioning profile can install, and an install over the queue gives no
+InstallationProxy readback; confirm the build on the device (the companion's
+**Running** label, or the app's own version screen). Run
+`python3 ota/test_ota_queue.py` for the fixture tests.
+
+[`ota/ota_release.py`](ota/ota_release.py) is the earlier single-release
+version of this lane. Generated OTA data belongs under `~/.local/share/ios-ota/`,
+not in the repository. Do not use Tailscale Funnel for private development
+builds.
 
 ## Earlier experiments
 
