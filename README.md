@@ -1,7 +1,13 @@
 # Deploy Link
 
-This repository tests direct iOS development installs when the Mac and a paired
-iPhone or iPad are on different physical networks.
+Delivers Alex's signed iOS development builds to his iPhone and iPad from the
+Mac, over Wi-Fi or cellular.
+
+**The default route is the install queue** (since 19 October 2026): publish a
+build with `ota-queue publish`, then install it from the Deploy Link app on the
+iPhone or iPad. See [Install queue and iPhone app](#install-queue-and-iphone-app-no-warm-session-needed).
+The warm-session direct install described next is kept as a fallback and runs
+only when Alex asks for it.
 
 ## Verified result
 
@@ -303,7 +309,7 @@ signed .app -> ota-queue publish -> ~/.local/share/ios-ota/queue/<id>/
 ```sh
 ota=~/.local/share/deploy-link/bin/ota-queue
 "$ota" publish /path/to/App.app --note "What changed"
-"$ota" list      # newest first, with download counts
+"$ota" list      # newest first: app ID, build, note, downloads per device
 "$ota" remove <release-id>
 ```
 

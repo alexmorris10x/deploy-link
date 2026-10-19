@@ -485,11 +485,13 @@ def command_list(args: argparse.Namespace) -> None:
         print(json.dumps({
             "id": record["id"],
             "title": record["title"],
+            "bundleIdentifier": record["bundleIdentifier"],
             "version": record["version"],
             "build": record["build"],
+            "note": record.get("note") or "",
             "createdAt": record["createdAt"],
             "downloadCount": len(completed),
-            "lastDownloadedAt": completed[-1]["at"] if completed else None,
+            "downloadedBy": downloads_by_device(completed),
         }, sort_keys=True))
 
 
