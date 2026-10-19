@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ReleaseListView: View {
     @Environment(ReleaseStore.self) private var store
@@ -129,16 +130,25 @@ private struct ReleaseRow: View {
         if release.isRunningBuild {
             Label("This is the build you're running", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)
-        } else if let downloaded = release.lastDownloaded {
-            Label("Downloaded \(downloaded, style: .relative) ago", systemImage: "arrow.down.circle.fill")
-                .foregroundStyle(.green)
-        } else if let requestedAt {
+        } else if let requestedAt, !downloadedHere(since: requestedAt) {
             Label("Install started \(requestedAt, style: .relative) ago — tap Install on the iOS prompt", systemImage: "hourglass")
                 .foregroundStyle(.orange)
         } else if release.isThisApp {
             Label("Update for this app", systemImage: "arrow.triangle.2.circlepath")
                 .foregroundStyle(.blue)
         }
+        ForEach(release.downloadedBy ?? [], id: \.device) { download in
+            if let date = download.date {
+                Label("Downloaded on \(download.device) \(date, style: .relative) ago", systemImage: "arrow.down.circle.fill")
+                    .foregroundStyle(.green)
+            }
+        }
+    }
+
+    /// Whether this kind of device fetched the build after Install was tapped here.
+    private func downloadedHere(since requestedAt: Date) -> Bool {
+        let family = UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
+        return (release.downloadedBy ?? []).contains { $0.device == family && ($0.date ?? .distantPast) >= requestedAt.addingTimeInterval(-5) }
     }
 
     private var icon: some View {

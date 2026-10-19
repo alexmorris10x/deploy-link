@@ -19,9 +19,17 @@ struct Release: Decodable, Identifiable, Hashable {
     let installURL: URL
     let downloadCount: Int
     let lastDownloadedAt: String?
+    /// Latest completed download per device family ("iPhone", "iPad"), newest first.
+    let downloadedBy: [DeviceDownload]?
+
+    struct DeviceDownload: Decodable, Hashable {
+        let device: String
+        let at: String
+
+        var date: Date? { ISO8601DateFormatter().date(from: at) }
+    }
 
     var created: Date? { ISO8601DateFormatter().date(from: createdAt) }
-    var lastDownloaded: Date? { lastDownloadedAt.flatMap { ISO8601DateFormatter().date(from: $0) } }
 
     /// True when this release is the app that is running right now.
     var isThisApp: Bool { bundleIdentifier == Bundle.main.bundleIdentifier }

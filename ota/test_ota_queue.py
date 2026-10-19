@@ -150,6 +150,19 @@ class ServerTests(unittest.TestCase):
         release = json.loads(self.get("/api/releases")[2])["releases"][0]
         self.assertEqual(release["downloadCount"], 1)
         self.assertIsNotNone(release["lastDownloadedAt"])
+        self.assertEqual(release["downloadedBy"][0]["device"], "Unknown device")
+
+    def test_downloads_are_grouped_by_device(self) -> None:
+        iphone = "com.apple.appstored/1.0 iOS/27.0.1 model/iPhone15,3 hwp/t8120"
+        ipad = "com.apple.appstored/1.0 iOS/27.0.1 model/iPad14,1 hwp/t8110"
+        for at, agent in (("2026-10-19T07:00:00Z", iphone), ("2026-10-19T07:05:00Z", ipad), ("2026-10-19T07:10:00Z", iphone)):
+            self.queue.record_download(self.record["id"], {"at": at, "complete": True, "userAgent": agent})
+        self.queue.record_download(self.record["id"], {"at": "2026-10-19T07:20:00Z", "complete": False, "userAgent": ipad})
+        release = json.loads(self.get("/api/releases")[2])["releases"][0]
+        self.assertEqual(release["downloadedBy"], [
+            {"device": "iPhone", "at": "2026-10-19T07:10:00Z"},
+            {"device": "iPad", "at": "2026-10-19T07:05:00Z"},
+        ])
 
     def test_html_page_and_unknown_paths(self) -> None:
         _, content_type, body = self.get("/")

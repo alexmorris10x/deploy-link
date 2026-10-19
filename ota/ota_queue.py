@@ -297,6 +297,20 @@ def manifest_plist(record: dict, base_url: str) -> bytes:
     return plistlib.dumps(manifest, fmt=plistlib.FMT_XML, sort_keys=True)
 
 
+def device_kind(user_agent: str) -> str:
+    """Name the device family from iOS's installer user agent (`... model/iPad13,18 ...`)."""
+    match = re.search(r"model/([A-Za-z]+)", user_agent or "")
+    return match.group(1) if match else "Unknown device"
+
+
+def downloads_by_device(completed: list) -> list:
+    """The latest completed download per device family, newest first."""
+    latest = {}
+    for event in completed:
+        latest[device_kind(event.get("userAgent", ""))] = event["at"]
+    return [{"device": device, "at": at} for device, at in sorted(latest.items(), key=lambda item: item[1], reverse=True)]
+
+
 def public_record(record: dict, base_url: str) -> dict:
     release = f"{base_url}r/{record['id']}/"
     manifest_url = release + "manifest.plist"
@@ -318,6 +332,7 @@ def public_record(record: dict, base_url: str) -> dict:
         "installURL": "itms-services://?action=download-manifest&url=" + quote(manifest_url, safe=""),
         "downloadCount": len(completed),
         "lastDownloadedAt": completed[-1]["at"] if completed else None,
+        "downloadedBy": downloads_by_device(completed),
     }
 
 
@@ -325,7 +340,9 @@ def index_page(records: list) -> bytes:
     rows = []
     for record in records:
         downloaded = (
-            f"Downloaded {html.escape(record['lastDownloadedAt'])}" if record["lastDownloadedAt"] else "Not downloaded yet"
+            "Downloaded on " + ", ".join(html.escape(f"{entry['device']} {entry['at']}") for entry in record["downloadedBy"])
+            if record["downloadedBy"]
+            else "Not downloaded yet"
         )
         icon = (
             f'<img src="{html.escape(record["iconURL"], quote=True)}" alt="">' if record["iconURL"] else '<div class="blank"></div>'
