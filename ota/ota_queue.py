@@ -1,0 +1,529 @@
+#!/usr/bin/env python3
+"""Queue signed iOS builds and serve them for over-the-air install through private Tailscale HTTPS.
+
+`publish` turns a signed development or ad hoc `.app` (or `.ipa`) into a queued
+release. `serve` runs one loopback server that `tailscale serve` exposes to the
+tailnet. The Deploy Link iPhone app (and the HTML page at `/`) lists the queue
+and hands each release's `itms-services` link to iOS, which shows its own
+install prompt and downloads the IPA. No RemotePairing session is involved, so
+this works on cellular as long as the phone has Tailscale connected.
+
+Only devices listed in the app's provisioning profile can install a release.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import html
+import json
+import os
+import plistlib
+import re
+import shutil
+import stat
+import sys
+import tempfile
+import threading
+import zipfile
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Optional
+from urllib.parse import quote, urlparse
+
+SCHEMA_VERSION = 1
+DEFAULT_ROOT = Path("~/.local/share/ios-ota/queue").expanduser()
+DEFAULT_PORT = 8477
+DEFAULT_KEEP = 5
+RELEASE_ID = re.compile(r"^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$")
+CHUNK = 1024 * 1024
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+# ---------------------------------------------------------------------------
+# Reading a signed app
+
+
+def read_app_identity(info: dict) -> dict:
+    try:
+        return {
+            "bundleIdentifier": str(info["CFBundleIdentifier"]),
+            "version": str(info["CFBundleShortVersionString"]),
+            "build": str(info["CFBundleVersion"]),
+            "title": str(info.get("CFBundleDisplayName") or info["CFBundleName"]),
+        }
+    except (KeyError, TypeError) as error:
+        raise ValueError(f"app Info.plist is missing {error}") from error
+
+
+def icon_candidates(info: dict) -> list:
+    """Icon file name prefixes from Info.plist, largest-looking first."""
+    names = []
+    for key in ("CFBundleIcons", "CFBundleIcons~ipad"):
+        primary = (info.get(key) or {}).get("CFBundlePrimaryIcon") or {}
+        names.extend(primary.get("CFBundleIconFiles") or [])
+    return sorted(set(names), key=lambda name: [int(n) for n in re.findall(r"\d+", name)] or [0], reverse=True)
+
+
+def pick_icon(names: list, prefixes: list) -> Optional[str]:
+    """Choose the largest bundled PNG whose name starts with an Info.plist icon prefix."""
+    best = None
+    best_score = -1.0
+    for name in names:
+        base = name.rsplit("/", 1)[-1]
+        if not base.lower().endswith(".png"):
+            continue
+        if not any(base.startswith(prefix) for prefix in prefixes):
+            continue
+        size = re.findall(r"(\d+(?:\.\d+)?)x\1", base)
+        scale = re.findall(r"@(\d)x", base)
+        score = (float(size[0]) if size else 1.0) * (int(scale[0]) if scale else 1)
+        if score > best_score:
+            best, best_score = name, score
+    return best
+
+
+def provisioning_summary(raw: bytes) -> dict:
+    """Read the unsigned plist inside embedded.mobileprovision (a CMS envelope)."""
+    start = raw.find(b"<?xml")
+    end = raw.find(b"</plist>")
+    if start < 0 or end < 0:
+        return {}
+    try:
+        profile = plistlib.loads(raw[start : end + len(b"</plist>")])
+    except plistlib.InvalidFileException:
+        return {}
+    expires = profile.get("ExpirationDate")
+    entitlements = profile.get("Entitlements") or {}
+    if profile.get("ProvisionsAllDevices"):
+        kind = "enterprise"
+    elif entitlements.get("get-task-allow"):
+        kind = "development"
+    else:
+        kind = "ad-hoc"
+    return {
+        "profileName": str(profile.get("Name", "")),
+        "profileKind": kind,
+        "profileExpires": expires.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+        if isinstance(expires, datetime)
+        else None,
+        "provisionedDeviceCount": len(profile.get("ProvisionedDevices") or []),
+    }
+
+
+def zip_app(app: Path, destination: Path) -> None:
+    """Write `Payload/<name>.app` into an IPA, keeping symlinks and executable bits."""
+    with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+        root = Path("Payload") / app.name
+        for directory, subdirectories, files in os.walk(app, followlinks=False):
+            subdirectories.sort()
+            current = Path(directory)
+            relative = root / current.relative_to(app)
+            entry = zipfile.ZipInfo(str(relative) + "/")
+            entry.external_attr = (stat.S_IFDIR | 0o755) << 16
+            archive.writestr(entry, b"")
+            for name in sorted(files) + [d for d in subdirectories if (current / d).is_symlink()]:
+                path = current / name
+                member = str(relative / name)
+                if path.is_symlink():
+                    entry = zipfile.ZipInfo(member)
+                    entry.create_system = 3
+                    entry.external_attr = (stat.S_IFLNK | 0o755) << 16
+                    archive.writestr(entry, os.readlink(path))
+                else:
+                    archive.write(path, member)
+
+
+def inspect_ipa(ipa: Path) -> tuple:
+    """Return (identity, provisioning summary, icon bytes or None) from an IPA."""
+    with zipfile.ZipFile(ipa) as archive:
+        names = archive.namelist()
+        info_members = [
+            name
+            for name in names
+            if name.startswith("Payload/") and name.endswith(".app/Info.plist") and name.count("/") == 2
+        ]
+        if len(info_members) != 1:
+            raise ValueError(f"expected one app in {ipa.name}, found {len(info_members)}")
+        app_prefix = info_members[0][: -len("Info.plist")]
+        info = plistlib.loads(archive.read(info_members[0]))
+        identity = read_app_identity(info)
+        profile_member = app_prefix + "embedded.mobileprovision"
+        if profile_member not in names:
+            raise ValueError("the app has no embedded.mobileprovision; build it signed for a device")
+        provisioning = provisioning_summary(archive.read(profile_member))
+        top_level = [name for name in names if name.startswith(app_prefix) and name.count("/") == 2]
+        icon_name = pick_icon(top_level, icon_candidates(info))
+        icon = archive.read(icon_name) if icon_name else None
+    return identity, provisioning, icon
+
+
+# ---------------------------------------------------------------------------
+# The queue on disk
+
+
+class Queue:
+    def __init__(self, root: Path):
+        self.root = root
+        self.lock = threading.Lock()
+
+    def release_dir(self, release_id: str) -> Path:
+        if not RELEASE_ID.match(release_id):
+            raise KeyError(release_id)
+        directory = self.root / release_id
+        if not (directory / "release.json").is_file():
+            raise KeyError(release_id)
+        return directory
+
+    def load(self, release_id: str) -> dict:
+        directory = self.release_dir(release_id)
+        record = json.loads((directory / "release.json").read_text(encoding="utf-8"))
+        record["id"] = release_id
+        record["downloads"] = self.downloads(directory)
+        return record
+
+    def downloads(self, directory: Path) -> list:
+        log = directory / "downloads.jsonl"
+        if not log.is_file():
+            return []
+        events = []
+        for line in log.read_text(encoding="utf-8").splitlines():
+            try:
+                events.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return events
+
+    def records(self) -> list:
+        if not self.root.is_dir():
+            return []
+        found = []
+        for directory in self.root.iterdir():
+            if RELEASE_ID.match(directory.name) and (directory / "release.json").is_file():
+                try:
+                    found.append(self.load(directory.name))
+                except (OSError, ValueError, KeyError):
+                    continue
+        return sorted(found, key=lambda record: record["id"], reverse=True)
+
+    def record_download(self, release_id: str, event: dict) -> None:
+        directory = self.release_dir(release_id)
+        with self.lock, (directory / "downloads.jsonl").open("a", encoding="utf-8") as log:
+            log.write(json.dumps(event, sort_keys=True) + "\n")
+
+    def publish(self, source: Path, note: str = "", keep: int = DEFAULT_KEEP) -> dict:
+        source = source.expanduser().resolve()
+        self.root.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.root, 0o700)
+        staging = Path(tempfile.mkdtemp(prefix=".publish-", dir=self.root))
+        try:
+            ipa = staging / "app.ipa"
+            if source.is_dir() and source.suffix == ".app":
+                zip_app(source, ipa)
+            elif source.is_file() and source.suffix == ".ipa":
+                shutil.copyfile(source, ipa)
+            else:
+                raise ValueError(f"expected a signed .app folder or an .ipa file: {source}")
+            identity, provisioning, icon = inspect_ipa(ipa)
+            if icon:
+                (staging / "icon.png").write_bytes(icon)
+            digest = hashlib.sha256()
+            with ipa.open("rb") as handle:
+                for block in iter(lambda: handle.read(CHUNK), b""):
+                    digest.update(block)
+            created = datetime.now(timezone.utc)
+            release_id = created.strftime("%Y%m%dT%H%M%SZ") + "-" + digest.hexdigest()[:8]
+            record = {
+                "schemaVersion": SCHEMA_VERSION,
+                **identity,
+                **provisioning,
+                "note": note,
+                "createdAt": created.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                "ipaBytes": ipa.stat().st_size,
+                "ipaSHA256": digest.hexdigest(),
+                "hasIcon": bool(icon),
+            }
+            (staging / "release.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            final = self.root / release_id
+            if final.exists():
+                raise ValueError(f"release {release_id} already exists")
+            staging.rename(final)
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+        self.prune(record["bundleIdentifier"], keep)
+        return self.load(release_id)
+
+    def prune(self, bundle_identifier: str, keep: int) -> list:
+        """Keep the newest `keep` releases of one app; move the rest out of the queue."""
+        same_app = [record for record in self.records() if record.get("bundleIdentifier") == bundle_identifier]
+        removed = []
+        for record in same_app[max(keep, 1) :]:
+            self.remove(record["id"])
+            removed.append(record["id"])
+        return removed
+
+    def remove(self, release_id: str) -> None:
+        shutil.rmtree(self.release_dir(release_id))
+
+
+# ---------------------------------------------------------------------------
+# Serving
+
+
+def manifest_plist(record: dict, base_url: str) -> bytes:
+    release = f"{base_url}r/{record['id']}/"
+    assets = [{"kind": "software-package", "url": release + "app.ipa"}]
+    if record.get("hasIcon"):
+        assets.append({"kind": "display-image", "url": release + "icon.png"})
+        assets.append({"kind": "full-size-image", "url": release + "icon.png"})
+    manifest = {
+        "items": [
+            {
+                "assets": assets,
+                "metadata": {
+                    "bundle-identifier": record["bundleIdentifier"],
+                    "bundle-version": record["version"],
+                    "kind": "software",
+                    "title": record["title"],
+                },
+            }
+        ]
+    }
+    return plistlib.dumps(manifest, fmt=plistlib.FMT_XML, sort_keys=True)
+
+
+def public_record(record: dict, base_url: str) -> dict:
+    release = f"{base_url}r/{record['id']}/"
+    manifest_url = release + "manifest.plist"
+    downloads = record.get("downloads") or []
+    completed = [event for event in downloads if event.get("complete")]
+    return {
+        "id": record["id"],
+        "title": record["title"],
+        "bundleIdentifier": record["bundleIdentifier"],
+        "version": record["version"],
+        "build": record["build"],
+        "note": record.get("note") or "",
+        "createdAt": record["createdAt"],
+        "ipaBytes": record["ipaBytes"],
+        "profileKind": record.get("profileKind"),
+        "profileExpires": record.get("profileExpires"),
+        "iconURL": release + "icon.png" if record.get("hasIcon") else None,
+        "manifestURL": manifest_url,
+        "installURL": "itms-services://?action=download-manifest&url=" + quote(manifest_url, safe=""),
+        "downloadCount": len(completed),
+        "lastDownloadedAt": completed[-1]["at"] if completed else None,
+    }
+
+
+def index_page(records: list) -> bytes:
+    rows = []
+    for record in records:
+        downloaded = (
+            f"Downloaded {html.escape(record['lastDownloadedAt'])}" if record["lastDownloadedAt"] else "Not downloaded yet"
+        )
+        icon = (
+            f'<img src="{html.escape(record["iconURL"], quote=True)}" alt="">' if record["iconURL"] else '<div class="blank"></div>'
+        )
+        note = f"<p>{html.escape(record['note'])}</p>" if record["note"] else ""
+        rows.append(
+            f"""<li>{icon}<div class="text"><h2>{html.escape(record['title'])}</h2>
+<p>{html.escape(record['version'])} ({html.escape(record['build'])}) · {html.escape(record['createdAt'])}</p>{note}
+<p class="muted">{downloaded}</p></div>
+<a class="button" href="{html.escape(record['installURL'], quote=True)}">Install</a></li>"""
+        )
+    body = "\n".join(rows) or "<li><p>No builds are waiting.</p></li>"
+    page = f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deploy Link builds</title>
+<style>
+body {{ background: #f4f6fa; color: #172033; font: 17px -apple-system, system-ui, sans-serif; margin: 0; padding: 24px 16px; }}
+h1 {{ font-size: 28px; margin: 0 auto 16px; max-width: 560px; }}
+ul {{ list-style: none; margin: 0 auto; max-width: 560px; padding: 0; }}
+li {{ align-items: center; background: white; border-radius: 18px; display: flex; gap: 14px; margin-bottom: 12px; padding: 14px; }}
+img, .blank {{ background: #dfe3ec; border-radius: 13px; height: 56px; width: 56px; }}
+.text {{ flex: 1; min-width: 0; }} h2 {{ font-size: 18px; margin: 0; }} p {{ color: #566179; margin: 2px 0; }}
+.muted {{ font-size: 14px; }}
+a.button {{ background: #225cbf; border-radius: 12px; color: white; font-weight: 650; padding: 10px 16px; text-decoration: none; }}
+</style></head>
+<body><h1>Deploy Link builds</h1><ul>
+{body}
+</ul></body></html>
+"""
+    return page.encode("utf-8")
+
+
+def make_handler(queue: Queue, base_url: str):
+    class Handler(BaseHTTPRequestHandler):
+        server_version = "DeployLinkOTA/1"
+
+        def log_message(self, format: str, *args) -> None:  # noqa: A002 - stdlib signature
+            sys.stderr.write(f"{utc_now()} {self.command} {self.path.split('?')[0]} {format % args}\n")
+
+        def send_bytes(self, status: int, content_type: str, payload: bytes, head: bool = False) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if not head:
+                self.wfile.write(payload)
+
+        def not_found(self, head: bool = False) -> None:
+            self.send_bytes(404, "application/json", b'{"error":"not found"}\n', head)
+
+        def do_HEAD(self) -> None:  # noqa: N802 - stdlib naming
+            self.route(head=True)
+
+        def do_GET(self) -> None:  # noqa: N802 - stdlib naming
+            self.route(head=False)
+
+        def route(self, head: bool) -> None:
+            path = urlparse(self.path).path
+            if path in ("/", "/index.html"):
+                records = [public_record(record, base_url) for record in queue.records()]
+                return self.send_bytes(200, "text/html; charset=utf-8", index_page(records), head)
+            if path == "/api/releases":
+                payload = {
+                    "schemaVersion": SCHEMA_VERSION,
+                    "generatedAt": utc_now(),
+                    "releases": [public_record(record, base_url) for record in queue.records()],
+                }
+                return self.send_bytes(200, "application/json", json.dumps(payload, sort_keys=True).encode("utf-8"), head)
+            parts = path.strip("/").split("/")
+            if len(parts) != 3 or parts[0] != "r":
+                return self.not_found(head)
+            release_id, name = parts[1], parts[2]
+            try:
+                record = queue.load(release_id)
+                directory = queue.release_dir(release_id)
+            except (KeyError, OSError, ValueError):
+                return self.not_found(head)
+            if name == "manifest.plist":
+                return self.send_bytes(200, "text/xml", manifest_plist(record, base_url), head)
+            if name == "icon.png" and record.get("hasIcon"):
+                return self.send_bytes(200, "image/png", (directory / "icon.png").read_bytes(), head)
+            if name == "app.ipa":
+                return self.send_ipa(release_id, directory / "app.ipa", head)
+            return self.not_found(head)
+
+        def send_ipa(self, release_id: str, ipa: Path, head: bool) -> None:
+            size = ipa.stat().st_size
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(size))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if head:
+                return
+            sent = 0
+            started = utc_now()
+            try:
+                with ipa.open("rb") as handle:
+                    for block in iter(lambda: handle.read(CHUNK), b""):
+                        self.wfile.write(block)
+                        sent += len(block)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            finally:
+                queue.record_download(
+                    release_id,
+                    {
+                        "at": utc_now(),
+                        "startedAt": started,
+                        "bytes": sent,
+                        "complete": sent == size,
+                        "userAgent": (self.headers.get("User-Agent") or "")[:200],
+                    },
+                )
+
+    return Handler
+
+
+def normalized_base_url(value: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme != "https" or not parsed.netloc or parsed.query or parsed.fragment:
+        raise ValueError("--base-url must be an https URL without a query or fragment")
+    return value.rstrip("/") + "/"
+
+
+# ---------------------------------------------------------------------------
+# Commands
+
+
+def command_publish(args: argparse.Namespace) -> None:
+    record = Queue(args.root).publish(Path(args.source), note=args.note, keep=args.keep)
+    print(json.dumps({key: record[key] for key in ("id", "title", "bundleIdentifier", "version", "build", "profileKind", "provisionedDeviceCount", "ipaBytes") if key in record}, sort_keys=True))
+
+
+def command_list(args: argparse.Namespace) -> None:
+    for record in Queue(args.root).records():
+        completed = [event for event in record["downloads"] if event.get("complete")]
+        print(json.dumps({
+            "id": record["id"],
+            "title": record["title"],
+            "version": record["version"],
+            "build": record["build"],
+            "createdAt": record["createdAt"],
+            "downloadCount": len(completed),
+            "lastDownloadedAt": completed[-1]["at"] if completed else None,
+        }, sort_keys=True))
+
+
+def command_remove(args: argparse.Namespace) -> None:
+    try:
+        Queue(args.root).remove(args.release_id)
+    except KeyError:
+        raise SystemExit(f"error: no release {args.release_id}")
+
+
+def command_serve(args: argparse.Namespace) -> None:
+    base_url = normalized_base_url(args.base_url)
+    queue = Queue(args.root)
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(queue, base_url))
+    server.daemon_threads = True
+    print(f"Serving {args.root} on http://127.0.0.1:{args.port} as {base_url}", flush=True)
+    server.serve_forever()
+
+
+def parser() -> argparse.ArgumentParser:
+    root = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    root.add_argument("--root", type=lambda value: Path(value).expanduser(), default=DEFAULT_ROOT, help=f"queue folder (default {DEFAULT_ROOT})")
+    commands = root.add_subparsers(dest="command", required=True)
+
+    publish = commands.add_parser("publish", help="queue a signed .app or .ipa")
+    publish.add_argument("source")
+    publish.add_argument("--note", default="", help="short line shown under the build")
+    publish.add_argument("--keep", type=int, default=DEFAULT_KEEP, help="newest releases kept per app")
+    publish.set_defaults(action=command_publish)
+
+    listing = commands.add_parser("list", help="print queued releases, newest first")
+    listing.set_defaults(action=command_list)
+
+    remove = commands.add_parser("remove", help="delete one queued release")
+    remove.add_argument("release_id")
+    remove.set_defaults(action=command_remove)
+
+    serve = commands.add_parser("serve", help="serve the queue on loopback for tailscale serve")
+    serve.add_argument("--base-url", required=True, help="the tailnet HTTPS address that proxies to this port")
+    serve.add_argument("--port", type=int, default=DEFAULT_PORT)
+    serve.set_defaults(action=command_serve)
+    return root
+
+
+def main() -> None:
+    args = parser().parse_args()
+    try:
+        args.action(args)
+    except (OSError, ValueError, plistlib.InvalidFileException, zipfile.BadZipFile) as error:
+        raise SystemExit(f"error: {error}") from error
+
+
+if __name__ == "__main__":
+    main()
