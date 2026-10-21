@@ -5,10 +5,19 @@
 release. `serve` runs one loopback server that `tailscale serve` exposes to the
 tailnet. The Deploy Link iPhone app (and the HTML page at `/`) lists the queue
 and hands each release's `itms-services` link to iOS, which shows its own
-install prompt and downloads the IPA. No RemotePairing session is involved, so
-this works on cellular as long as the phone has Tailscale connected.
+install prompt and downloads the IPA straight from this Mac. Nothing is hosted
+anywhere else, and this works on Wi-Fi or cellular as long as the device has
+Tailscale connected.
+
+The app tags each install link with its device (`?device=<id>&family=iPhone`),
+so the server knows which download is running where and remembers, per device,
+the last build of each app that finished downloading (`devices.json`). The app
+uses that to block a second download of the same app and to ask before
+reinstalling a build the device already has.
 
 Only devices listed in the app's provisioning profile can install a release.
+Releases leave the queue when a newer one pushes them past the newest `keep`
+per app, when their provisioning profile expires, or on `remove`.
 """
 
 from __future__ import annotations
@@ -30,13 +39,15 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
-from urllib.parse import quote, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 SCHEMA_VERSION = 1
 DEFAULT_ROOT = Path("~/.local/share/ios-ota/queue").expanduser()
 DEFAULT_PORT = 8477
 DEFAULT_KEEP = 5
 RELEASE_ID = re.compile(r"^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$")
+DEVICE_ID = re.compile(r"^[A-Za-z0-9-]{1,64}$")
+FAMILIES = ("iPhone", "iPad")
 CHUNK = 1024 * 1024
 
 
@@ -170,6 +181,8 @@ class Queue:
     def __init__(self, root: Path):
         self.root = root
         self.lock = threading.Lock()
+        # Downloads in flight, by a per-request token. In memory only: a restart ends them anyway.
+        self.active: dict = {}
 
     def release_dir(self, release_id: str) -> Path:
         if not RELEASE_ID.match(release_id):
@@ -212,8 +225,93 @@ class Queue:
 
     def record_download(self, release_id: str, event: dict) -> None:
         directory = self.release_dir(release_id)
-        with self.lock, (directory / "downloads.jsonl").open("a", encoding="utf-8") as log:
-            log.write(json.dumps(event, sort_keys=True) + "\n")
+        with self.lock:
+            with (directory / "downloads.jsonl").open("a", encoding="utf-8") as log:
+                log.write(json.dumps(event, sort_keys=True) + "\n")
+            if event.get("complete"):
+                record = json.loads((directory / "release.json").read_text(encoding="utf-8"))
+                devices = self._devices_unlocked()
+                key = device_key(event.get("deviceId"), event.get("family") or device_kind(event.get("userAgent", "")))
+                entry = devices.setdefault(key, {"family": event.get("family") or device_kind(event.get("userAgent", "")), "apps": {}})
+                entry["apps"][record["bundleIdentifier"]] = {
+                    "releaseId": release_id,
+                    "title": record["title"],
+                    "version": record["version"],
+                    "build": record["build"],
+                    "at": event["at"],
+                }
+                self._write_devices(devices)
+
+    # What each device last downloaded, kept apart from the releases so it
+    # outlives them: `{device key: {"family": "iPhone", "apps": {bundle id: {...}}}}`.
+
+    def devices_path(self) -> Path:
+        return self.root / "devices.json"
+
+    def devices(self) -> dict:
+        with self.lock:
+            return self._devices_unlocked()
+
+    def _devices_unlocked(self) -> dict:
+        path = self.devices_path()
+        if path.is_file():
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                pass
+        # First run (or a damaged file): rebuild from the download logs, which only name the device family.
+        devices: dict = {}
+        events = []
+        for record in self.records():
+            for event in record["downloads"]:
+                if event.get("complete"):
+                    events.append((event["at"], record, event))
+        for at, record, event in sorted(events, key=lambda item: item[0]):
+            family = event.get("family") or device_kind(event.get("userAgent", ""))
+            entry = devices.setdefault(device_key(event.get("deviceId"), family), {"family": family, "apps": {}})
+            entry["apps"][record["bundleIdentifier"]] = {
+                "releaseId": record["id"],
+                "title": record["title"],
+                "version": record["version"],
+                "build": record["build"],
+                "at": at,
+            }
+        if self.root.is_dir():
+            self._write_devices(devices)
+        return devices
+
+    def _write_devices(self, devices: dict) -> None:
+        temporary = self.devices_path().with_suffix(".tmp")
+        temporary.write_text(json.dumps(devices, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        temporary.replace(self.devices_path())
+
+    def installed_on(self, device_id: Optional[str], family: Optional[str]) -> dict:
+        """The newest build of each app this device downloaded, by its own id or (older records) its family."""
+        devices = self.devices()
+        merged: dict = {}
+        keys = [key for key in (device_key(device_id, None), device_key(None, family)) if key]
+        for key in keys:
+            for bundle, app in (devices.get(key) or {}).get("apps", {}).items():
+                if bundle not in merged or app["at"] > merged[bundle]["at"]:
+                    merged[bundle] = app
+        return merged
+
+    def start_download(self, token: object, release_id: str, device_id: Optional[str], family: str, total: int) -> None:
+        with self.lock:
+            self.active[token] = {"releaseId": release_id, "deviceId": device_id, "family": family, "bytes": 0, "totalBytes": total, "startedAt": utc_now()}
+
+    def progress(self, token: object, sent: int) -> None:
+        with self.lock:
+            if token in self.active:
+                self.active[token]["bytes"] = sent
+
+    def finish_download(self, token: object) -> None:
+        with self.lock:
+            self.active.pop(token, None)
+
+    def active_downloads(self, release_id: str) -> list:
+        with self.lock:
+            return [dict(item) for item in self.active.values() if item["releaseId"] == release_id]
 
     def publish(self, source: Path, note: str = "", keep: int = DEFAULT_KEEP) -> dict:
         source = source.expanduser().resolve()
@@ -256,6 +354,7 @@ class Queue:
             shutil.rmtree(staging, ignore_errors=True)
             raise
         self.prune(record["bundleIdentifier"], keep)
+        self.prune_expired()
         return self.load(release_id)
 
     def prune(self, bundle_identifier: str, keep: int) -> list:
@@ -267,6 +366,17 @@ class Queue:
             removed.append(record["id"])
         return removed
 
+    def prune_expired(self, now: Optional[datetime] = None) -> list:
+        """Remove releases whose provisioning profile has expired; iOS would refuse them anyway."""
+        stamp = (now or datetime.now(timezone.utc)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        removed = []
+        for record in self.records():
+            expires = record.get("profileExpires")
+            if expires and expires <= stamp:
+                self.remove(record["id"])
+                removed.append(record["id"])
+        return removed
+
     def remove(self, release_id: str) -> None:
         shutil.rmtree(self.release_dir(release_id))
 
@@ -275,9 +385,9 @@ class Queue:
 # Serving
 
 
-def manifest_plist(record: dict, base_url: str) -> bytes:
+def manifest_plist(record: dict, base_url: str, tag: str = "") -> bytes:
     release = f"{base_url}r/{record['id']}/"
-    assets = [{"kind": "software-package", "url": release + "app.ipa"}]
+    assets = [{"kind": "software-package", "url": release + "app.ipa" + tag}]
     if record.get("hasIcon"):
         assets.append({"kind": "display-image", "url": release + "icon.png"})
         assets.append({"kind": "full-size-image", "url": release + "icon.png"})
@@ -297,6 +407,27 @@ def manifest_plist(record: dict, base_url: str) -> bytes:
     return plistlib.dumps(manifest, fmt=plistlib.FMT_XML, sort_keys=True)
 
 
+def device_key(device_id: Optional[str], family: Optional[str]) -> Optional[str]:
+    if device_id and DEVICE_ID.match(device_id):
+        return "id:" + device_id
+    if family:
+        return "family:" + family
+    return None
+
+
+def device_tag(query: str) -> tuple:
+    """Read `device` and `family` from an install link's query; drop anything malformed."""
+    values = parse_qs(query)
+    device_id = (values.get("device") or [""])[0]
+    family = (values.get("family") or [""])[0]
+    return (device_id if DEVICE_ID.match(device_id) else None, family if family in FAMILIES else None)
+
+
+def tag_query(device_id: Optional[str], family: Optional[str]) -> str:
+    pairs = [(key, value) for key, value in (("device", device_id), ("family", family)) if value]
+    return "?" + urlencode(pairs) if pairs else ""
+
+
 def device_kind(user_agent: str) -> str:
     """Name the device family from iOS's installer user agent (`... model/iPad13,18 ...`)."""
     match = re.search(r"model/([A-Za-z]+)", user_agent or "")
@@ -307,11 +438,11 @@ def downloads_by_device(completed: list) -> list:
     """The latest completed download per device family, newest first."""
     latest = {}
     for event in completed:
-        latest[device_kind(event.get("userAgent", ""))] = event["at"]
+        latest[event.get("family") or device_kind(event.get("userAgent", ""))] = event["at"]
     return [{"device": device, "at": at} for device, at in sorted(latest.items(), key=lambda item: item[1], reverse=True)]
 
 
-def public_record(record: dict, base_url: str) -> dict:
+def public_record(record: dict, base_url: str, active: Optional[list] = None) -> dict:
     release = f"{base_url}r/{record['id']}/"
     manifest_url = release + "manifest.plist"
     downloads = record.get("downloads") or []
@@ -333,6 +464,10 @@ def public_record(record: dict, base_url: str) -> dict:
         "downloadCount": len(completed),
         "lastDownloadedAt": completed[-1]["at"] if completed else None,
         "downloadedBy": downloads_by_device(completed),
+        "activeDownloads": [
+            {"deviceId": item["deviceId"], "device": item["family"], "bytes": item["bytes"], "totalBytes": item["totalBytes"], "startedAt": item["startedAt"]}
+            for item in active or []
+        ],
     }
 
 
@@ -401,16 +536,38 @@ def make_handler(queue: Queue, base_url: str):
         def do_GET(self) -> None:  # noqa: N802 - stdlib naming
             self.route(head=False)
 
+        def do_DELETE(self) -> None:  # noqa: N802 - stdlib naming
+            parts = urlparse(self.path).path.strip("/").split("/")
+            if len(parts) != 3 or parts[:2] != ["api", "releases"]:
+                return self.not_found()
+            try:
+                queue.remove(parts[2])
+            except (KeyError, OSError):
+                return self.not_found()
+            self.send_bytes(200, "application/json", b'{"removed":true}\n')
+
+        def releases(self) -> list:
+            queue.prune_expired()
+            return [public_record(record, base_url, queue.active_downloads(record["id"])) for record in queue.records()]
+
         def route(self, head: bool) -> None:
-            path = urlparse(self.path).path
+            url = urlparse(self.path)
+            path = url.path
             if path in ("/", "/index.html"):
-                records = [public_record(record, base_url) for record in queue.records()]
-                return self.send_bytes(200, "text/html; charset=utf-8", index_page(records), head)
+                return self.send_bytes(200, "text/html; charset=utf-8", index_page(self.releases()), head)
             if path == "/api/releases":
+                releases = self.releases()
+                available = {release["id"] for release in releases}
+                device_id, family = device_tag(url.query)
+                installed = {
+                    bundle: {**app, "available": app["releaseId"] in available}
+                    for bundle, app in queue.installed_on(device_id, family).items()
+                }
                 payload = {
                     "schemaVersion": SCHEMA_VERSION,
                     "generatedAt": utc_now(),
-                    "releases": [public_record(record, base_url) for record in queue.records()],
+                    "releases": releases,
+                    "installed": installed,
                 }
                 return self.send_bytes(200, "application/json", json.dumps(payload, sort_keys=True).encode("utf-8"), head)
             parts = path.strip("/").split("/")
@@ -422,15 +579,16 @@ def make_handler(queue: Queue, base_url: str):
                 directory = queue.release_dir(release_id)
             except (KeyError, OSError, ValueError):
                 return self.not_found(head)
+            device_id, family = device_tag(url.query)
             if name == "manifest.plist":
-                return self.send_bytes(200, "text/xml", manifest_plist(record, base_url), head)
+                return self.send_bytes(200, "text/xml", manifest_plist(record, base_url, tag_query(device_id, family)), head)
             if name == "icon.png" and record.get("hasIcon"):
                 return self.send_bytes(200, "image/png", (directory / "icon.png").read_bytes(), head)
             if name == "app.ipa":
-                return self.send_ipa(release_id, directory / "app.ipa", head)
+                return self.send_ipa(release_id, directory / "app.ipa", head, device_id, family)
             return self.not_found(head)
 
-        def send_ipa(self, release_id: str, ipa: Path, head: bool) -> None:
+        def send_ipa(self, release_id: str, ipa: Path, head: bool, device_id: Optional[str], family: Optional[str]) -> None:
             size = ipa.stat().st_size
             self.send_response(200)
             self.send_header("Content-Type", "application/octet-stream")
@@ -441,24 +599,34 @@ def make_handler(queue: Queue, base_url: str):
                 return
             sent = 0
             started = utc_now()
+            user_agent = (self.headers.get("User-Agent") or "")[:200]
+            family = family or device_kind(user_agent)
+            token = object()
+            queue.start_download(token, release_id, device_id, family, size)
             try:
                 with ipa.open("rb") as handle:
                     for block in iter(lambda: handle.read(CHUNK), b""):
                         self.wfile.write(block)
                         sent += len(block)
+                        queue.progress(token, sent)
             except (BrokenPipeError, ConnectionResetError):
                 pass
             finally:
-                queue.record_download(
-                    release_id,
-                    {
-                        "at": utc_now(),
-                        "startedAt": started,
-                        "bytes": sent,
-                        "complete": sent == size,
-                        "userAgent": (self.headers.get("User-Agent") or "")[:200],
-                    },
-                )
+                queue.finish_download(token)
+                event = {
+                    "at": utc_now(),
+                    "startedAt": started,
+                    "bytes": sent,
+                    "complete": sent == size,
+                    "family": family,
+                    "userAgent": user_agent,
+                }
+                if device_id:
+                    event["deviceId"] = device_id
+                try:
+                    queue.record_download(release_id, event)
+                except KeyError:
+                    pass  # removed while it downloaded
 
     return Handler
 
@@ -495,6 +663,10 @@ def command_list(args: argparse.Namespace) -> None:
         }, sort_keys=True))
 
 
+def command_devices(args: argparse.Namespace) -> None:
+    print(json.dumps(Queue(args.root).devices(), indent=2, sort_keys=True))
+
+
 def command_remove(args: argparse.Namespace) -> None:
     try:
         Queue(args.root).remove(args.release_id)
@@ -524,6 +696,9 @@ def parser() -> argparse.ArgumentParser:
 
     listing = commands.add_parser("list", help="print queued releases, newest first")
     listing.set_defaults(action=command_list)
+
+    devices = commands.add_parser("devices", help="print the last build of each app every device downloaded")
+    devices.set_defaults(action=command_devices)
 
     remove = commands.add_parser("remove", help="delete one queued release")
     remove.add_argument("release_id")

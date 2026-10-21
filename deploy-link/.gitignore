@@ -1,7 +1,0 @@
-.DS_Store
-.build/
-coverage.out
-*.test
-*.log
-pairing/
-profiles/

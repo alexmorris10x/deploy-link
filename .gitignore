@@ -9,6 +9,3 @@ DerivedData/
 *.xcresult
 *.xcuserstate
 xcuserdata/
-pairing/
-profiles/
-remote_*.plist

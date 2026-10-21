@@ -94,6 +94,15 @@ class QueueTests(unittest.TestCase):
         builds = [record["build"] for record in self.queue.records()]
         self.assertEqual(builds, ["3", "2"])
 
+    def test_expired_profiles_leave_the_queue(self) -> None:
+        record = self.queue.publish(make_app(self.work, "5"))
+        path = self.queue.root / record["id"] / "release.json"
+        data = json.loads(path.read_text())
+        data["profileExpires"] = "2026-01-01T00:00:00Z"
+        path.write_text(json.dumps(data))
+        self.assertEqual(self.queue.prune_expired(), [record["id"]])
+        self.assertEqual(self.queue.records(), [])
+
     def test_release_ids_cannot_escape_the_queue(self) -> None:
         with self.assertRaises(KeyError):
             self.queue.release_dir("../etc")
@@ -163,6 +172,46 @@ class ServerTests(unittest.TestCase):
             {"device": "iPhone", "at": "2026-10-19T07:10:00Z"},
             {"device": "iPad", "at": "2026-10-19T07:05:00Z"},
         ])
+
+    def test_tagged_install_is_remembered_per_device(self) -> None:
+        tag = "?device=ABC-123&family=iPad"
+        item = plistlib.loads(self.get(f"/r/{self.record['id']}/manifest.plist{tag}")[2])["items"][0]
+        ipa_url = {asset["kind"]: asset["url"] for asset in item["assets"]}["software-package"]
+        self.assertTrue(ipa_url.endswith("app.ipa?device=ABC-123&family=iPad"))
+        self.get(f"/r/{self.record['id']}/app.ipa{tag}")
+        feed = json.loads(self.get("/api/releases?device=ABC-123&family=iPad")[2])
+        installed = feed["installed"]["com.example.sample"]
+        self.assertEqual((installed["build"], installed["available"]), ("7", True))
+        self.assertEqual(json.loads(self.get("/api/releases?device=OTHER&family=iPhone")[2])["installed"], {})
+        # The memory outlives the release.
+        self.queue.remove(self.record["id"])
+        installed = json.loads(self.get("/api/releases?device=ABC-123")[2])["installed"]["com.example.sample"]
+        self.assertFalse(installed["available"])
+
+    def test_untagged_history_falls_back_to_family(self) -> None:
+        iphone = "com.apple.appstored/1.0 iOS/27.0.1 model/iPhone15,3 hwp/t8120"
+        self.queue.record_download(self.record["id"], {"at": "2026-10-19T07:10:00Z", "complete": True, "userAgent": iphone})
+        installed = json.loads(self.get("/api/releases?device=NEW-ID&family=iPhone")[2])["installed"]
+        self.assertEqual(installed["com.example.sample"]["build"], "7")
+
+    def test_active_download_is_listed(self) -> None:
+        token = object()
+        self.queue.start_download(token, self.record["id"], "ABC", "iPhone", 100)
+        self.queue.progress(token, 40)
+        active = json.loads(self.get("/api/releases")[2])["releases"][0]["activeDownloads"]
+        self.assertEqual(active[0]["deviceId"], "ABC")
+        self.assertEqual((active[0]["bytes"], active[0]["totalBytes"]), (40, 100))
+        self.queue.finish_download(token)
+        self.assertEqual(json.loads(self.get("/api/releases")[2])["releases"][0]["activeDownloads"], [])
+
+    def test_delete_removes_release(self) -> None:
+        request = urllib.request.Request(f"{self.local}/api/releases/{self.record['id']}", method="DELETE")
+        with urllib.request.urlopen(request) as response:
+            self.assertEqual(response.status, 200)
+        self.assertEqual(json.loads(self.get("/api/releases")[2])["releases"], [])
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request)
+        self.assertEqual(caught.exception.code, 404)
 
     def test_html_page_and_unknown_paths(self) -> None:
         _, content_type, body = self.get("/")

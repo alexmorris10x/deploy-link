@@ -1,12 +1,22 @@
 import SwiftUI
-import UIKit
 
 struct ReleaseListView: View {
     @Environment(ReleaseStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
     @State private var showingSettings = false
+    @State private var confirming: Confirmation?
+
+    /// An install or removal that needs a second tap.
+    struct Confirmation: Identifiable {
+        enum Kind { case reinstall, downgrade, delete }
+        let kind: Kind
+        let release: Release
+        let installed: InstalledApp?
+        var id: String { "\(kind)-\(release.id)" }
+    }
 
     var body: some View {
+        @Bindable var store = store
         NavigationStack {
             content
                 .navigationTitle("Builds")
@@ -20,13 +30,27 @@ struct ReleaseListView: View {
                     SettingsView()
                         .environment(store)
                 }
+                .alert(item: $confirming) { confirmation in
+                    alert(for: confirmation)
+                }
+                .alert("Not available", isPresented: Binding(get: { store.notice != nil }, set: { if !$0 { store.notice = nil } })) {
+                    Button("OK", role: .cancel) {}
+                } message: {
+                    Text(store.notice ?? "")
+                }
         }
-        // Poll while the app is in front so a new build shows up without a pull.
+        // Poll while the app is in front: every 2 seconds while a download is running, otherwise every 15.
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
             while !Task.isCancelled {
                 await store.refresh()
-                try? await Task.sleep(for: .seconds(15))
+                let busy = store.releases.contains { release in
+                    switch store.installState(of: release) {
+                    case .waiting, .downloading: true
+                    default: false
+                    }
+                }
+                try? await Task.sleep(for: .seconds(busy ? 2 : 15))
             }
         }
     }
@@ -67,14 +91,12 @@ struct ReleaseListView: View {
                         description: Text("Builds the Mac publishes to the queue appear here.")
                     )
                 } else {
-                    Section {
-                        ForEach(store.releases) { release in
-                            ReleaseRow(release: release, requestedAt: store.installRequests[release.id]) {
-                                store.install(release)
-                            }
-                        }
-                    } footer: {
-                        if case .loaded(let date) = store.state {
+                    ForEach(store.apps, id: \.first!.bundleIdentifier) { releases in
+                        AppSection(releases: releases, confirm: { confirming = $0 })
+                    }
+                    if case .loaded(let date) = store.state {
+                        Section {
+                        } footer: {
                             Text("Updated \(date, style: .relative) ago")
                         }
                     }
@@ -82,23 +104,115 @@ struct ReleaseListView: View {
             }
         }
     }
+
+    private func alert(for confirmation: Confirmation) -> Alert {
+        let release = confirmation.release
+        let device = store.family
+        switch confirmation.kind {
+        case .reinstall:
+            return Alert(
+                title: Text("Install \(release.versionLabel) again?"),
+                message: Text("This \(device) already has \(release.title) \(release.versionLabel)."),
+                primaryButton: .default(Text("Install Again")) { Task { await store.install(release) } },
+                secondaryButton: .cancel()
+            )
+        case .downgrade:
+            return Alert(
+                title: Text("Install an older build?"),
+                message: Text("This \(device) has \(confirmation.installed?.versionLabel ?? "a newer build"). \(release.versionLabel) is older."),
+                primaryButton: .destructive(Text("Install Older Build")) { Task { await store.install(release) } },
+                secondaryButton: .cancel()
+            )
+        case .delete:
+            return Alert(
+                title: Text("Remove \(release.versionLabel)?"),
+                message: Text("This deletes \(release.title) \(release.versionLabel) from the Mac's queue for every device. Apps already installed stay installed."),
+                primaryButton: .destructive(Text("Remove")) { Task { await store.delete(release) } },
+                secondaryButton: .cancel()
+            )
+        }
+    }
+}
+
+/// One app: what this device has, the newest build, and older builds folded away.
+private struct AppSection: View {
+    @Environment(ReleaseStore.self) private var store
+    let releases: [Release]
+    let confirm: (ReleaseListView.Confirmation) -> Void
+    @State private var showingOlder = false
+
+    var body: some View {
+        let latest = releases[0]
+        let older = Array(releases.dropFirst())
+        Section {
+            row(latest, isLatest: true)
+            if !older.isEmpty {
+                DisclosureGroup("Older builds (\(older.count))", isExpanded: $showingOlder) {
+                    ForEach(older) { row($0, isLatest: false) }
+                }
+                .font(.subheadline)
+            }
+        } header: {
+            Text(latest.title)
+        } footer: {
+            onThisDevice(latest.bundleIdentifier)
+        }
+    }
+
+    private func row(_ release: Release, isLatest: Bool) -> some View {
+        let installed = store.installedBuild(of: release.bundleIdentifier)
+        return ReleaseRow(release: release, isLatest: isLatest, state: store.installState(of: release)) { state in
+            switch state {
+            case .installed: confirm(.init(kind: .reinstall, release: release, installed: installed))
+            case .older: confirm(.init(kind: .downgrade, release: release, installed: installed))
+            default: Task { await store.install(release) }
+            }
+        }
+        .swipeActions {
+            Button("Remove", systemImage: "trash", role: .destructive) {
+                confirm(.init(kind: .delete, release: release, installed: installed))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func onThisDevice(_ bundleIdentifier: String) -> some View {
+        if let installed = store.installedBuild(of: bundleIdentifier) {
+            let gone = installed.available ? "" : " — no longer in the queue"
+            if let date = installed.date {
+                Text("On this \(store.family): \(installed.versionLabel), installed \(date, style: .relative) ago\(gone)")
+            } else {
+                Text("On this \(store.family): \(installed.versionLabel)\(gone)")
+            }
+        } else {
+            Text("Not installed on this \(store.family) from Deploy Link")
+        }
+    }
 }
 
 private struct ReleaseRow: View {
     let release: Release
-    let requestedAt: Date?
-    let install: () -> Void
+    let isLatest: Bool
+    let state: InstallState
+    let tap: (InstallState) -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
             icon
             VStack(alignment: .leading, spacing: 3) {
-                Text(release.title)
-                    .font(.headline)
-                    .lineLimit(1)
-                Text("\(release.version) (\(release.build))")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text(release.versionLabel)
+                        .font(.headline.monospacedDigit())
+                        .lineLimit(1)
+                    if isLatest {
+                        Text("Latest")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(.blue.opacity(0.15), in: Capsule())
+                            .foregroundStyle(.blue)
+                    }
+                }
                 if let created = release.created {
                     Text("Built \(created, style: .relative) ago · \(ByteCountFormatter.string(fromByteCount: Int64(release.ipaBytes), countStyle: .file))")
                         .font(.caption)
@@ -112,43 +226,69 @@ private struct ReleaseRow: View {
                     .font(.caption.weight(.medium))
             }
             Spacer(minLength: 8)
-            if release.isRunningBuild {
-                Text("Running")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            } else {
-                Button("Install", action: install)
-                    .buttonStyle(.borderedProminent)
-                    .buttonBorderShape(.capsule)
-            }
+            button
         }
         .padding(.vertical, 4)
     }
 
     @ViewBuilder
-    private var status: some View {
-        if release.isRunningBuild {
-            Label("This is the build you're running", systemImage: "checkmark.circle.fill")
-                .foregroundStyle(.green)
-        } else if let requestedAt, !downloadedHere(since: requestedAt) {
-            Label("Install started \(requestedAt, style: .relative) ago — tap Install on the iOS prompt", systemImage: "hourglass")
-                .foregroundStyle(.orange)
-        } else if release.isThisApp {
-            Label("Update for this app", systemImage: "arrow.triangle.2.circlepath")
-                .foregroundStyle(.blue)
-        }
-        ForEach(release.downloadedBy ?? [], id: \.device) { download in
-            if let date = download.date {
-                Label("Downloaded on \(download.device) \(date, style: .relative) ago", systemImage: "arrow.down.circle.fill")
-                    .foregroundStyle(.green)
-            }
+    private var button: some View {
+        switch state {
+        case .running:
+            Text("Running")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+        case .downloading(let fraction):
+            ProgressView(value: fraction)
+                .progressViewStyle(.circular)
+                .overlay { Text("\(Int(fraction * 100))").font(.system(size: 9).monospacedDigit()) }
+                .frame(width: 34, height: 34)
+        case .waiting:
+            ProgressView()
+                .frame(width: 34, height: 34)
+        case .installed:
+            Button("Installed") { tap(state) }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+        case .older, .busy:
+            Button("Install") { tap(state) }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+                .disabled(state == .busy)
+        case .install, .update:
+            Button(state == .update ? "Update" : "Install") { tap(state) }
+                .buttonStyle(.borderedProminent)
+                .buttonBorderShape(.capsule)
         }
     }
 
-    /// Whether this kind of device fetched the build after Install was tapped here.
-    private func downloadedHere(since requestedAt: Date) -> Bool {
-        let family = UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
-        return (release.downloadedBy ?? []).contains { $0.device == family && ($0.date ?? .distantPast) >= requestedAt.addingTimeInterval(-5) }
+    @ViewBuilder
+    private var status: some View {
+        switch state {
+        case .running:
+            Label("The build you're running", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .installed:
+            Label("On this device", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .waiting:
+            Label("Tap Install on the iOS prompt", systemImage: "hourglass")
+                .foregroundStyle(.orange)
+        case .downloading:
+            Label("Downloading from the Mac…", systemImage: "arrow.down.circle")
+                .foregroundStyle(.blue)
+        case .busy:
+            Label("Another build of this app is installing", systemImage: "hourglass")
+                .foregroundStyle(.secondary)
+        case .older:
+            Label("Older than the build on this device", systemImage: "arrow.uturn.backward.circle")
+                .foregroundStyle(.secondary)
+        case .install, .update:
+            if let others = release.downloadedBy, !others.isEmpty {
+                Label("Downloaded on \(others.map(\.device).joined(separator: ", "))", systemImage: "arrow.down.circle")
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     private var icon: some View {
@@ -161,8 +301,8 @@ private struct ReleaseRow: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(.quaternary)
         }
-        .frame(width: 56, height: 56)
-        .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .frame(width: 48, height: 48)
+        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
     }
 }
 
@@ -185,7 +325,7 @@ private struct SettingsView: View {
                 } header: {
                     Text("Mac address")
                 } footer: {
-                    Text("The Mac's private Tailscale address. Keep Tailscale connected on this iPhone; builds install over Wi-Fi or cellular.")
+                    Text("The Mac's private Tailscale address. Builds download straight from the Mac over Wi-Fi or cellular while Tailscale is connected on this device.")
                 }
                 Section("This app") {
                     LabeledContent("Version", value: AppInfo.version)
