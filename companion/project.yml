@@ -21,10 +21,18 @@ targets:
     sources:
       - path: DeployLinkCompanion
     settings:
+      configs:
+        # Debug builds the separate "Deploy Link Dev" app (own bundle ID, DEV icon) like Alex's other iOS apps.
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: com.10x.deploylink.dev
+          ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon-Dev
+          APP_DISPLAY_NAME: Deploy Link Dev
+        Release:
+          PRODUCT_BUNDLE_IDENTIFIER: com.10x.deploylink
+          ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+          APP_DISPLAY_NAME: Deploy Link
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.10x.deploylink
         INFOPLIST_FILE: DeployLinkCompanion/Info.plist
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTS_MACCATALYST: "NO"
         SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: "NO"
@@ -32,7 +40,7 @@ targets:
     info:
       path: DeployLinkCompanion/Info.plist
       properties:
-        CFBundleDisplayName: Deploy Link
+        CFBundleDisplayName: "$(APP_DISPLAY_NAME)"
         CFBundleName: DeployLinkCompanion
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"

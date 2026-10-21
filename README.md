@@ -78,8 +78,11 @@ from the main checkout after changing `ota/ota_queue.py`. Run
 
 ## The app
 
-[`companion/`](companion/) is the Deploy Link app (`com.10x.deploylink`,
-XcodeGen `project.yml`, iPhone and iPad). Build it with the normal Debug device
+[`companion/`](companion/) is the Deploy Link app (XcodeGen `project.yml`,
+iPhone and iPad). Debug builds **Deploy Link Dev** (`com.10x.deploylink.dev`,
+orange DEV banner icon in `AppIcon-Dev`), the build Alex keeps installed;
+Release keeps `com.10x.deploylink`. Regenerate the Dev icon with
+`~/bin/ios-dev-icon --catalog companion/DeployLinkCompanion/Assets.xcassets/AppIcon.appiconset companion/DeployLinkCompanion/Assets.xcassets/AppIcon-Dev.appiconset`. Build it with the normal Debug device
 build and publish it to the queue like any other app; it marks the build it is
 running, so updating it through itself is the end-to-end test.
 
