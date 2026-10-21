@@ -17,7 +17,8 @@ reinstalling a build the device already has.
 
 Only devices listed in the app's provisioning profile can install a release.
 Releases leave the queue when a newer one pushes them past the newest `keep`
-per app, when their provisioning profile expires, or on `remove`.
+per app, when their provisioning profile expires, on `remove`, and every night
+when the Mac's `mac-dev-cleanup` runs `prune` (newest build of each app only).
 """
 
 from __future__ import annotations
@@ -663,6 +664,15 @@ def command_list(args: argparse.Namespace) -> None:
         }, sort_keys=True))
 
 
+def command_prune(args: argparse.Namespace) -> None:
+    """Keep the newest `--keep` releases of every app (the nightly Mac cleanup runs this with 1)."""
+    queue = Queue(args.root)
+    removed = queue.prune_expired()
+    for bundle in sorted({record["bundleIdentifier"] for record in queue.records()}):
+        removed += queue.prune(bundle, args.keep)
+    print(json.dumps({"removed": removed, "kept": len(queue.records())}, sort_keys=True))
+
+
 def command_devices(args: argparse.Namespace) -> None:
     print(json.dumps(Queue(args.root).devices(), indent=2, sort_keys=True))
 
@@ -696,6 +706,10 @@ def parser() -> argparse.ArgumentParser:
 
     listing = commands.add_parser("list", help="print queued releases, newest first")
     listing.set_defaults(action=command_list)
+
+    prune = commands.add_parser("prune", help="keep only the newest releases of every app")
+    prune.add_argument("--keep", type=int, default=1, help="newest releases kept per app (default 1)")
+    prune.set_defaults(action=command_prune)
 
     devices = commands.add_parser("devices", help="print the last build of each app every device downloaded")
     devices.set_defaults(action=command_devices)

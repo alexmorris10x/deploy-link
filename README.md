@@ -54,6 +54,8 @@ installed some other way (Xcode, USB) isn't known.
 ## How builds are cleared out
 
 - Publishing keeps the newest five releases of each app and deletes the rest.
+- Every night at 03:50 the Mac's `mac-dev-cleanup` job runs `ota-queue prune`,
+  which keeps only the newest build of each app.
 - Releases whose provisioning profile has expired are deleted (on publish and
   whenever the app refreshes).
 - `ota-queue remove <id>`, or a swipe in the app, deletes one release.
@@ -65,6 +67,7 @@ ota=~/.local/share/deploy-link/bin/ota-queue
 "$ota" publish /path/to/App.app --note "What changed"
 "$ota" list      # newest first: app ID, build, note, downloads per device
 "$ota" devices   # the last build of each app every device downloaded
+"$ota" prune     # keep only the newest build of each app (--keep N)
 "$ota" remove <release-id>
 ```
 

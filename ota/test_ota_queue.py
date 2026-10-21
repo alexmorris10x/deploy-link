@@ -103,6 +103,14 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(self.queue.prune_expired(), [record["id"]])
         self.assertEqual(self.queue.records(), [])
 
+    def test_prune_keeps_newest_of_every_app(self) -> None:
+        for build in ("1", "2"):
+            record = self.queue.publish(make_app(self.work, build))
+            os.rename(self.queue.root / record["id"], self.queue.root / f"2026010{build}T000000Z-{record['id'][-8:]}")
+        for bundle in {r["bundleIdentifier"] for r in self.queue.records()}:
+            self.queue.prune(bundle, 1)
+        self.assertEqual([r["build"] for r in self.queue.records()], ["2"])
+
     def test_release_ids_cannot_escape_the_queue(self) -> None:
         with self.assertRaises(KeyError):
             self.queue.release_dir("../etc")
