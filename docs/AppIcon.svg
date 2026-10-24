@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2FD08A"/>
+      <stop offset="1" stop-color="#0E9F6E"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <!-- Phone, open at the top where the build drops in -->
+  <path d="M422 262 H392 A72 72 0 0 0 320 334 V706 A72 72 0 0 0 392 778 H632 A72 72 0 0 0 704 706 V334 A72 72 0 0 0 632 262 H602"
+        fill="none" stroke="#FFFFFF" stroke-width="48" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Arrow into the phone -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="48" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="512" y1="178" x2="512" y2="560"/>
+    <polyline points="420,468 512,560 604,468"/>
+  </g>
+  <line x1="462" y1="690" x2="562" y2="690" stroke="#FFFFFF" stroke-width="40" stroke-linecap="round"/>
+</svg>
