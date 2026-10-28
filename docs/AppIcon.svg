@@ -1,18 +1,43 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Deploy Link — a jade download ribbon landing on a phone</title>
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#2FD08A"/>
-      <stop offset="1" stop-color="#0E9F6E"/>
+    <linearGradient id="ink" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#17362F"/><stop offset="1" stop-color="#091A1B"/>
     </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#FFFFFF"/><stop offset="0.5" stop-color="#DEE9E6"/><stop offset="1" stop-color="#829C96"/>
+    </linearGradient>
+    <linearGradient id="face" x1="0" y1="0" x2="0.85" y2="1">
+      <stop stop-color="#FFFFFF"/><stop offset="0.65" stop-color="#F4F9F7"/><stop offset="1" stop-color="#DCEAE5"/>
+    </linearGradient>
+    <linearGradient id="jade" x1="0" y1="0" x2="0.85" y2="1">
+      <stop stop-color="#74ECC1"/><stop offset="0.5" stop-color="#30C99B"/><stop offset="1" stop-color="#099777"/>
+    </linearGradient>
+    <linearGradient id="slot" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#0C6557"/><stop offset="1" stop-color="#1D8F78"/>
+    </linearGradient>
+    <filter id="phoneShadow" x="-60%" y="-40%" width="220%" height="200%">
+      <feDropShadow dx="-14" dy="28" stdDeviation="26" flood-color="#020F10" flood-opacity="0.6"/>
+    </filter>
+    <filter id="ribbonShadow" x="-60%" y="-30%" width="220%" height="180%">
+      <feDropShadow dx="14" dy="20" stdDeviation="18" flood-color="#083C32" flood-opacity="0.34"/>
+    </filter>
   </defs>
-  <rect width="1024" height="1024" fill="url(#bg)"/>
-  <!-- Phone, open at the top where the build drops in -->
-  <path d="M422 262 H392 A72 72 0 0 0 320 334 V706 A72 72 0 0 0 392 778 H632 A72 72 0 0 0 704 706 V334 A72 72 0 0 0 632 262 H602"
-        fill="none" stroke="#FFFFFF" stroke-width="48" stroke-linecap="round" stroke-linejoin="round"/>
-  <!-- Arrow into the phone -->
-  <g fill="none" stroke="#FFFFFF" stroke-width="48" stroke-linecap="round" stroke-linejoin="round">
-    <line x1="512" y1="178" x2="512" y2="560"/>
-    <polyline points="420,468 512,560 604,468"/>
+  <rect width="1024" height="1024" fill="url(#ink)"/>
+  <!-- A close-up phone, with a solid face rather than a small outline glyph. -->
+  <g filter="url(#phoneShadow)">
+    <rect x="350" y="174" width="580" height="1050" rx="108" fill="url(#rim)"/>
+    <rect x="368" y="192" width="544" height="1014" rx="91" fill="url(#face)"/>
+    <rect x="354" y="178" width="572" height="1042" rx="104" fill="none" stroke="#FFFFFF" stroke-opacity="0.7" stroke-width="3"/>
+    <rect x="549" y="218" width="182" height="40" rx="20" fill="#142F2B"/>
+    <rect x="476" y="650" width="328" height="22" rx="11" fill="#C4D8D1"/>
+    <rect x="476" y="646" width="328" height="18" rx="9" fill="url(#slot)"/>
+    <rect x="478" y="756" width="232" height="25" rx="12.5" fill="#C8DAD3"/>
+    <rect x="478" y="825" width="326" height="25" rx="12.5" fill="#DAE6E0"/>
+    <rect x="478" y="894" width="280" height="25" rx="12.5" fill="#DAE6E0"/>
   </g>
-  <line x1="462" y1="690" x2="562" y2="690" stroke="#FFFFFF" stroke-width="40" stroke-linecap="round"/>
+  <!-- The broad arrow enters from above and floats over the phone. -->
+  <path d="M272 0H504V342H627Q649 342 633 360L407 588Q389 606 371 588L145 360Q129 342 151 342H272Z"
+        fill="url(#jade)" filter="url(#ribbonShadow)"/>
+  <path d="M291 0V361H182L389 570L596 361H485V0" fill="none" stroke="#D2FFED" stroke-opacity="0.3" stroke-width="4" stroke-linejoin="round"/>
 </svg>

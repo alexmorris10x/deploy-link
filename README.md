@@ -82,7 +82,11 @@ from the main checkout after changing `ota/ota_queue.py`. Run
 iPhone and iPad). Debug builds **Deploy Link Dev** (`com.10x.deploylink.dev`,
 orange DEV banner icon in `AppIcon-Dev`), the build Alex keeps installed;
 Release keeps `com.10x.deploylink`. The icon is drawn in
-[`docs/AppIcon.svg`](docs/AppIcon.svg) (an arrow dropping into a phone);
+[`docs/AppIcon.svg`](docs/AppIcon.svg): a broad jade download ribbon over a
+solid pearl phone, on dark evergreen. Like Memex's page and bookmark, it uses
+close cropping, overlapping surfaces and soft shadows to stay recognizable
+at Home Screen size. The arrow and phone's top remain above the Dev banner;
+iOS supplies the outer mask. To regenerate the original artwork,
 render it with `rsvg-convert -w 1024 -h 1024 docs/AppIcon.svg | magick - -background black -alpha remove -alpha off PNG24:companion/DeployLinkCompanion/Assets.xcassets/AppIcon.appiconset/AppIcon.png`.
 Regenerate the Dev icon with
 `~/bin/ios-dev-icon --catalog companion/DeployLinkCompanion/Assets.xcassets/AppIcon.appiconset companion/DeployLinkCompanion/Assets.xcassets/AppIcon-Dev.appiconset`. Build it with the normal Debug device
