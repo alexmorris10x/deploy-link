@@ -66,7 +66,7 @@ Publishing keeps only the newest build per app by default; `--keep N` explicitly
 
 ## 11. Screens
 
-The Mac window shows prerequisites, queue status/address, latest builds, Add Build, separate app/server login switches, and optional management-access copy. Its menu-bar item exposes the queue, Add Build, address copy, and start/stop. Closing or quitting the app leaves an independently configured server running. An empty iOS client explains setup and offers **Connect Your Mac**. Settings contains **Mac address**, **Management token (optional)**, save/cancel, and privacy/support links. The queue groups releases by app with notes and transfer status. Reinstall/downgrade actions require confirmation; queue removal states that it deletes the server copy for all devices, without uninstalling an app.
+The Mac window shows prerequisites, queue status/address, latest builds, Add Build, separate app/server login switches, and optional management-access copy. Its menu-bar item exposes the queue, Add Build, address copy, and start/stop. Both the menu and Mac setup offer **Show in Dock**, enabled initially and remembered across launches; hiding the Dock icon keeps the menu-bar item and window available. Closing or quitting the app leaves an independently configured server running. An empty iOS client explains setup and offers **Connect Your Mac**. Settings contains **Mac address**, **Management token (optional)**, save/cancel, and privacy/support links. The queue groups releases by app with notes and transfer status. Reinstall/downgrade actions require confirmation; queue removal states that it deletes the server copy for all devices, without uninstalling an app.
 
 ## 12. Quality bar
 

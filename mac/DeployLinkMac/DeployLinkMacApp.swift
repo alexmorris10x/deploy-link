@@ -3,6 +3,7 @@ import SwiftUI
 
 @main
 struct DeployLinkMacApp: App {
+    @NSApplicationDelegateAdaptor(DeployLinkAppDelegate.self) private var appDelegate
     @State private var queue = QueueModel()
     var body: some Scene {
         Window("Deploy Link", id: "main") {
@@ -17,9 +18,29 @@ struct DeployLinkMacApp: App {
     }
 }
 
+private enum DockVisibility {
+    static let key = "deploylink.showInDock"
+
+    static var isShown: Bool {
+        UserDefaults.standard.object(forKey: key) as? Bool ?? true
+    }
+
+    static func apply(_ shown: Bool) {
+        NSApplication.shared.setActivationPolicy(shown ? .regular : .accessory)
+        DispatchQueue.main.async { NSApplication.shared.activate(ignoringOtherApps: true) }
+    }
+}
+
+private final class DeployLinkAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSApplication.shared.setActivationPolicy(DockVisibility.isShown ? .regular : .accessory)
+    }
+}
+
 private struct QueueMenu: View {
     @Bindable var queue: QueueModel
     @Environment(\.openWindow) private var openWindow
+    @AppStorage(DockVisibility.key) private var showInDock = true
 
     var body: some View {
         Text(queue.statusText)
@@ -43,6 +64,8 @@ private struct QueueMenu: View {
             }.disabled(queue.busy)
         }
         Toggle("Launch at Login", isOn: Binding(get: { queue.loginStatus == .enabled }, set: queue.setLaunchAtLogin))
+        Toggle("Show in Dock", isOn: $showInDock)
+            .onChange(of: showInDock) { _, shown in DockVisibility.apply(shown) }
         Divider()
         Button("Quit Deploy Link") { NSApplication.shared.terminate(nil) }
     }
@@ -50,6 +73,7 @@ private struct QueueMenu: View {
 
 private struct QueueView: View {
     @Bindable var queue: QueueModel
+    @AppStorage(DockVisibility.key) private var showInDock = true
 
     var body: some View {
         ScrollView {
@@ -133,6 +157,8 @@ private struct QueueView: View {
                         prerequisite("Full Xcode selected", ready: queue.snapshot.xcode, link: "https://developer.apple.com/xcode/")
                         prerequisite("Tailscale connected", ready: queue.snapshot.connected, link: "https://tailscale.com/download/mac")
                         Toggle("Launch Deploy Link at login", isOn: Binding(get: { queue.loginStatus == .enabled }, set: queue.setLaunchAtLogin))
+                        Toggle("Show in Dock", isOn: $showInDock)
+                            .onChange(of: showInDock) { _, shown in DockVisibility.apply(shown) }
                         if queue.loginStatus == .requiresApproval {
                             Text("Allow Deploy Link in System Settings → General → Login Items.").font(.caption).foregroundStyle(.secondary)
                         }
