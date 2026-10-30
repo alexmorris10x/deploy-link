@@ -110,7 +110,7 @@ class QueueTests(unittest.TestCase):
 
     def test_prune_keeps_newest_of_every_app(self) -> None:
         for build in ("1", "2"):
-            record = self.queue.publish(make_app(self.work, build))
+            record = self.queue.publish(make_app(self.work, build), keep=2)
             os.rename(self.queue.root / record["id"], self.queue.root / f"2026010{build}T000000Z-{record['id'][-8:]}")
         for bundle in {r["bundleIdentifier"] for r in self.queue.records()}:
             self.queue.prune(bundle, 1)

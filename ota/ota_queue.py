@@ -49,7 +49,7 @@ from urllib.parse import parse_qs, quote, urlencode, urlparse
 SCHEMA_VERSION = 1
 DEFAULT_ROOT = Path(os.environ.get("DEPLOY_LINK_QUEUE_ROOT", "~/.local/share/ios-ota/queue")).expanduser()
 DEFAULT_PORT = 8477
-DEFAULT_KEEP = 5
+DEFAULT_KEEP = 1
 RELEASE_ID = re.compile(r"^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$")
 DEVICE_ID = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 FAMILIES = ("iPhone", "iPad")

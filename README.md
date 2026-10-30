@@ -75,7 +75,7 @@ Queue removal affects every device's ability to download that package; it does n
 "$HOME/.local/share/deploy-link/bin/ota-queue" prune --keep 1
 ```
 
-Publishing retains the newest five releases per app by default (`--keep N` changes that). Expired releases are removed on publish and queue refresh. A separate `devices.json` retains each device's last completed downloads after releases leave the queue. The public installer does not add a nightly cleanup schedule. Keep original builds elsewhere if you need an archive.
+Publishing retains the newest release per app by default (`--keep N` changes that). Expired releases are removed on publish and queue refresh. A separate `devices.json` retains each device's last completed downloads after releases leave the queue. The public installer does not add a nightly cleanup schedule. Keep original builds elsewhere if you need an archive.
 
 ## Update, build, and contribute
 

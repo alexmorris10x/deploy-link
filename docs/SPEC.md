@@ -60,7 +60,7 @@ Deploy Link uses the jade download-ribbon/phone icon and native grouped build li
 | Safari queue page | Implemented | server HTML response |
 | Native App Store distribution | Prepared; policy and review acceptance pending | [Review question](release/app-review-question.md) |
 
-Publishing normally keeps five builds per app; explicit prune can keep fewer. Expired releases leave the queue. Device history survives release deletion. The public installer adds no automatic nightly pruning schedule.
+Publishing keeps only the newest build per app by default; `--keep N` explicitly retains more. Expired releases leave the queue. Device history survives release deletion. The public installer adds no automatic nightly pruning schedule.
 
 ## 11. Screens
 
