@@ -6,7 +6,7 @@ Deploy Link is initially free: the native Mac companion, Python server, and iOS 
 
 The site lives in `docs/site/`, with local assets and no build dependencies. `.github/workflows/pages.yml` publishes that folder to `https://alexmorris10x.github.io/deploy-link/` using official Pages actions and runs only when the repository is public. No paid hosting or domain is required.
 
-The page intentionally has no App Store badge before publication. Add the real listing link only after the app is available. The signed, notarized Mac 1.0.1 download is published on GitHub Releases and accessible without signing in. The source-installation instructions locally run `bash scripts/install_ota_queue.sh`; they do not download and execute an unseen script through a shell pipe.
+The page intentionally has no App Store badge before publication. Add the real listing link only after the app is available. The signed, notarized Mac 1.0.2 download is published on GitHub Releases and accessible without signing in. The source-installation instructions locally run `bash scripts/install_ota_queue.sh`; they do not download and execute an unseen script through a shell pipe.
 
 ## Native Mac release
 
@@ -29,13 +29,13 @@ The normal run checks Mac capacity, builds through `~/bin/ios-dev-build`, and st
 
 Packaging never launches the app, runs its installer, alters the live queue/service, publishes to GitHub, or submits to App Store Connect. The upload to Apple is notarization only.
 
-Version 1.0.1, build 2 is published as `Deploy-Link-Mac-1.0.1-2.dmg` on [release `v1.0.1-mac`](https://github.com/alexmorris10x/deploy-link/releases/tag/v1.0.1-mac), from source commit `5ff6710`. Public download:
+Version 1.0.2, build 3 is published as `Deploy-Link-Mac-1.0.2-3.dmg` on [release `v1.0.2-mac`](https://github.com/alexmorris10x/deploy-link/releases/tag/v1.0.2-mac), from source commit `bf98760`. Public download:
 
 ```text
-https://github.com/alexmorris10x/deploy-link/releases/download/v1.0.1-mac/Deploy-Link-Mac-1.0.1-2.dmg
+https://github.com/alexmorris10x/deploy-link/releases/download/v1.0.2-mac/Deploy-Link-Mac-1.0.2-3.dmg
 ```
 
-The corresponding `.sha256` file is published beside it. Both app and DMG notarization were accepted, both tickets were stapled and validated, and signature, image-integrity, and Gatekeeper checks passed. An anonymous full download matched SHA-256 `cd59ca4ca946da4499676244da175e7cd83fceaeea2b2c91f28987edbb3dc9d7`. Customers and reviewers use the same public download. For future releases, update public download links only after the asset is available without authentication.
+The corresponding `.sha256` file is published beside it. Both app and DMG notarization were accepted, both tickets were stapled and validated, and signature, image-integrity, and Gatekeeper checks passed. The packaged DMG has SHA-256 `6d1979e2814245d4632944035c5d1908d0ed2842014c3e56eb8ce398b6827dae`. Version 1.0.2 adds the persistent Show in Dock control and is installed on the maintainer’s Mac. Customers and reviewers use the same public download. For future releases, update public download links only after the asset is available without authentication.
 
 ## Runtime contract
 

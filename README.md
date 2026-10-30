@@ -24,7 +24,7 @@ The server packages a signed device app, reads its bundle/version/profile metada
 
 ## Set up your Mac
 
-[Download Deploy Link for Mac 1.0.1](https://github.com/alexmorris10x/deploy-link/releases/download/v1.0.1-mac/Deploy-Link-Mac-1.0.1-2.dmg) — signed and notarized, for macOS 14 or later on Apple silicon and Intel. [Release notes and checksum](https://github.com/alexmorris10x/deploy-link/releases/tag/v1.0.1-mac). The source installer remains available below.
+[Download Deploy Link for Mac 1.0.2](https://github.com/alexmorris10x/deploy-link/releases/download/v1.0.2-mac/Deploy-Link-Mac-1.0.2-3.dmg) — signed and notarized, for macOS 14 or later on Apple silicon and Intel. [Release notes and checksum](https://github.com/alexmorris10x/deploy-link/releases/tag/v1.0.2-mac). The source installer remains available below.
 
 Install full Xcode with its command-line tools selected in Xcode’s Locations settings, Python 3.9 or newer, and Tailscale on the Mac and iPhone/iPad. These prerequisites are separate from Deploy Link. The standalone Command Line Tools package is insufficient. You also need a valid signed iOS build for the intended devices/distribution method. The Mac must remain awake and signed in while serving. Tailscale has its own [plans](https://tailscale.com/pricing) and [terms](https://tailscale.com/terms).
 
