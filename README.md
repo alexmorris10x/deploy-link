@@ -24,7 +24,7 @@ The server packages a signed device app, reads its bundle/version/profile metada
 
 ## Set up your Mac
 
-Requires macOS, Python 3.9 or newer, Tailscale on both devices, and a valid signed iOS build for the intended devices/distribution method. The Mac must remain awake and signed in while serving. Tailscale has its own [plans](https://tailscale.com/pricing) and [terms](https://tailscale.com/terms).
+Requires macOS, full Xcode with its command-line tools selected in Xcode’s Locations settings, Python 3.9 or newer, Tailscale on both devices, and a valid signed iOS build for the intended devices/distribution method. The standalone Command Line Tools package is insufficient. The Mac must remain awake and signed in while serving. Tailscale has its own [plans](https://tailscale.com/pricing) and [terms](https://tailscale.com/terms).
 
 Clone this repository or extract its source ZIP. Read the installer, then run it locally:
 
