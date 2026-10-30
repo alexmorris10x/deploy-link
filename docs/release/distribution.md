@@ -6,7 +6,7 @@ Deploy Link is initially free: the native Mac companion, Python server, and iOS 
 
 The site lives in `docs/site/`, with local assets and no build dependencies. `.github/workflows/pages.yml` publishes that folder to `https://alexmorris10x.github.io/deploy-link/` using official Pages actions and runs only when the repository is public. No paid hosting or domain is required.
 
-The page intentionally has no App Store badge before publication. Add the real listing link only after the app is available. The Mac download also remains marked as being prepared until its release asset is published and accessible without signing in. The source-installation instructions locally run `bash scripts/install_ota_queue.sh`; they do not download and execute an unseen script through a shell pipe.
+The page intentionally has no App Store badge before publication. Add the real listing link only after the app is available. The signed, notarized Mac 1.0 download is published on GitHub Releases and accessible without signing in. The source-installation instructions locally run `bash scripts/install_ota_queue.sh`; they do not download and execute an unseen script through a shell pipe.
 
 ## Native Mac release
 
@@ -29,13 +29,13 @@ The normal run checks Mac capacity, builds through `~/bin/ios-dev-build`, and st
 
 Packaging never launches the app, runs its installer, alters the live queue/service, publishes to GitHub, or submits to App Store Connect. The upload to Apple is notarization only.
 
-For version 1.0, build 1, the planned public asset is `Deploy-Link-Mac-1.0-1.dmg` on release `v1.0.0-mac`. Once that release is published, the website and README can use:
+Version 1.0, build 1 is published as `Deploy-Link-Mac-1.0-1.dmg` on [release `v1.0.0-mac`](https://github.com/alexmorris10x/deploy-link/releases/tag/v1.0.0-mac), from source commit `800e8ab`. Public download:
 
 ```text
 https://github.com/alexmorris10x/deploy-link/releases/download/v1.0.0-mac/Deploy-Link-Mac-1.0-1.dmg
 ```
 
-Publish the corresponding `.sha256` file beside it and identify the source commit in the release notes. Keep the site in its pending state until the asset is available without authentication. Customers and reviewers use the same public download.
+The corresponding `.sha256` file is published beside it. Both app and DMG notarization were accepted, both tickets were stapled and validated, and signature, image-integrity, and Gatekeeper checks passed. An anonymous full download matched SHA-256 `e27ebda0a15b412e4d95ee364ba5f697d9df4dadbe6507d4f42ce739d51ea471`. Customers and reviewers use the same public download. For future releases, update public download links only after the asset is available without authentication.
 
 ## Runtime contract
 

@@ -24,13 +24,13 @@ The server packages a signed device app, reads its bundle/version/profile metada
 
 ## Set up your Mac
 
-The native Mac companion requires macOS 14 or later and supports Apple silicon and Intel. Its signed, notarized download is being prepared; until it is published, use the source installation below. Release availability is listed on the [download page](https://alexmorris10x.github.io/deploy-link/#download).
+[Download Deploy Link for Mac 1.0](https://github.com/alexmorris10x/deploy-link/releases/download/v1.0.0-mac/Deploy-Link-Mac-1.0-1.dmg) — signed and notarized, for macOS 14 or later on Apple silicon and Intel. [Release notes and checksum](https://github.com/alexmorris10x/deploy-link/releases/tag/v1.0.0-mac). The source installer remains available below.
 
 Install full Xcode with its command-line tools selected in Xcode’s Locations settings, Python 3.9 or newer, and Tailscale on the Mac and iPhone/iPad. These prerequisites are separate from Deploy Link. The standalone Command Line Tools package is insufficient. You also need a valid signed iOS build for the intended devices/distribution method. The Mac must remain awake and signed in while serving. Tailscale has its own [plans](https://tailscale.com/pricing) and [terms](https://tailscale.com/terms).
 
 ### Native Mac companion
 
-When the Mac download is available, open its disk image, drag **Deploy Link** into **Applications**, and open it. Use the setup control to install the bundled server. The app keeps a menu-bar item with server status, start/stop controls, queue opening and address copying, build publishing, and launch-at-login settings. Closing its window leaves the menu-bar item available.
+Open the downloaded disk image, drag **Deploy Link** into **Applications**, and open it. Use the setup control to install the bundled server. The app keeps a menu-bar item with server status, start/stop controls, queue opening and address copying, build publishing, and launch-at-login settings. Closing its window leaves the menu-bar item available.
 
 Use **Add Build** to choose a signed device `.app` or `.ipa`, add a note, and publish it to your queue. Open or copy the queue address to connect your iPhone or iPad. The Mac app uses the same server, queue, and management token as the command-line setup. An existing installation is detected; updating the server preserves its queue and token. Quitting the Mac app does not erase builds or stop the separate server service.
 
