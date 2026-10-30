@@ -6,13 +6,13 @@ Deploy Link is initially free: the native Mac companion, Python server, and iOS 
 
 The site lives in `docs/site/`, with local assets and no build dependencies. `.github/workflows/pages.yml` publishes that folder to `https://alexmorris10x.github.io/deploy-link/` using official Pages actions and runs only when the repository is public. No paid hosting or domain is required.
 
-The page intentionally has no App Store badge before publication. Add the real listing link only after the app is available. The signed, notarized Mac 1.0 download is published on GitHub Releases and accessible without signing in. The source-installation instructions locally run `bash scripts/install_ota_queue.sh`; they do not download and execute an unseen script through a shell pipe.
+The page intentionally has no App Store badge before publication. Add the real listing link only after the app is available. The signed, notarized Mac 1.0.1 download is published on GitHub Releases and accessible without signing in. The source-installation instructions locally run `bash scripts/install_ota_queue.sh`; they do not download and execute an unseen script through a shell pipe.
 
 ## Native Mac release
 
 Project: `mac/project.yml`; generated project: `mac/DeployLinkMac.xcodeproj`; scheme: `DeployLinkMac`; product: `Deploy Link.app`; bundle: `com.10x.deploylink.mac`. The app requires macOS 14 or later. Release builds contain both `arm64` and `x86_64` architectures.
 
-The companion bundles the queue server and installer. Xcode, Python 3.9+, and Tailscale are installed separately. Opening the app shows server status and setup; its menu-bar item provides queue opening/address copying, build publishing, server start/stop, and app launch-at-login controls. Closing the app window leaves the menu-bar item available. The server is a separate login LaunchAgent, so quitting the companion does not stop it. Replacing the Mac app preserves the existing queue and management token. To update the separately installed server, update the source and rerun its installer; the first release does not automatically replace a running server.
+The companion bundles the queue server and installer. Xcode, Python 3.9+, and Tailscale are installed separately. Opening the app shows server status and setup; its menu-bar item provides queue opening/address copying, build publishing, server start/stop, and app launch-at-login controls. Closing the app window leaves the menu-bar item available. The server is a separate login LaunchAgent, so quitting the companion does not stop it. Replacing the Mac app preserves the existing queue and management token. To update the separately installed server, update the source and rerun its installer; the companion does not automatically replace a running server.
 
 Run the packager from the worktree on the Mac. These values are identity/profile names, not passwords:
 
@@ -29,19 +29,19 @@ The normal run checks Mac capacity, builds through `~/bin/ios-dev-build`, and st
 
 Packaging never launches the app, runs its installer, alters the live queue/service, publishes to GitHub, or submits to App Store Connect. The upload to Apple is notarization only.
 
-Version 1.0, build 1 is published as `Deploy-Link-Mac-1.0-1.dmg` on [release `v1.0.0-mac`](https://github.com/alexmorris10x/deploy-link/releases/tag/v1.0.0-mac), from source commit `800e8ab`. Public download:
+Version 1.0.1, build 2 is published as `Deploy-Link-Mac-1.0.1-2.dmg` on [release `v1.0.1-mac`](https://github.com/alexmorris10x/deploy-link/releases/tag/v1.0.1-mac), from source commit `5ff6710`. Public download:
 
 ```text
-https://github.com/alexmorris10x/deploy-link/releases/download/v1.0.0-mac/Deploy-Link-Mac-1.0-1.dmg
+https://github.com/alexmorris10x/deploy-link/releases/download/v1.0.1-mac/Deploy-Link-Mac-1.0.1-2.dmg
 ```
 
-The corresponding `.sha256` file is published beside it. Both app and DMG notarization were accepted, both tickets were stapled and validated, and signature, image-integrity, and Gatekeeper checks passed. An anonymous full download matched SHA-256 `e27ebda0a15b412e4d95ee364ba5f697d9df4dadbe6507d4f42ce739d51ea471`. Customers and reviewers use the same public download. For future releases, update public download links only after the asset is available without authentication.
+The corresponding `.sha256` file is published beside it. Both app and DMG notarization were accepted, both tickets were stapled and validated, and signature, image-integrity, and Gatekeeper checks passed. An anonymous full download matched SHA-256 `cd59ca4ca946da4499676244da175e7cd83fceaeea2b2c91f28987edbb3dc9d7`. Customers and reviewers use the same public download. For future releases, update public download links only after the asset is available without authentication.
 
 ## Runtime contract
 
 - Python 3.9 or newer on macOS; Tailscale installed and connected. Installer: `bash scripts/install_ota_queue.sh`.
 - Default runtime: `~/.local/share/deploy-link/`; default queue: `~/.local/share/ios-ota/queue/`; LaunchAgent: `com.10x.deploy-link-ota`.
-- Default loopback port: 8477, reached through the user's private Tailscale HTTPS address. Do not use Funnel or expose the queue publicly.
+- Default loopback port: 8477, reached through the user's private Tailscale HTTPS address on dedicated port 8443. This preserves unrelated Tailscale services; include the port in the iPhone/iPad server address. Do not use Funnel or expose the queue publicly.
 - Queue listing and downloads use Tailscale/network access rules. `DELETE /api/releases/{id}` and `GET /api/management` require `Authorization: Bearer <management-token>`. Tokens do not belong in query strings or logs.
 - The server stores its token at `<queue-root>/.management-token` with owner-only permissions. `ota-queue admin-token --copy` copies it locally without printing it. For a custom queue: `ota-queue --root <queue-root> admin-token --copy`.
 - Installer overrides, when needed: `DEPLOY_LINK_RUNTIME_ROOT`, `DEPLOY_LINK_QUEUE_ROOT`, `DEPLOY_LINK_OTA_PORT`, `DEPLOY_LINK_OTA_BASE_URL`, `DEPLOY_LINK_PYTHON`, and `DEPLOY_LINK_TAILSCALE`. A custom base URL must be an HTTPS host root with no credentials, query, or fragment.
