@@ -76,7 +76,7 @@ A new user can configure their own queue, browse and download without a token, a
 | --- | --- |
 | Dev/production; XcodeGen | Separate Debug/Release identities; implemented |
 | Payments; internal payers; transactional email | Not applicable to this free, accountless launch |
-| Public page | Prepared; live publication and final listing link remain |
+| Public page | Live on GitHub Pages; native App Store listing link pending |
 | Analytics; feedback pass; waitlist | No tracking SDK, paid gate, or waitlist; free use supports evaluation |
 | Referrals; affiliates | Not now |
 | Blueprint and backlog | This file and TODO are canonical |
