@@ -53,7 +53,7 @@ Deploy Link is a client for a developer's own private signed-build queue, hosted
 
 The client has no preconfigured personal server. The user provides their own HTTPS server URL. The recommended network is Tailscale; a separate management token is required only to delete queue entries. A completed server transfer is labeled Downloaded because iOS does not report installation completion back to the client.
 
-Reviewer-owned setup requires a Mac with full Xcode, Python 3.9 or newer, Tailscale on the Mac and review device, and a harmless sample signed for that device and distribution method. These instructions are prepared; clean customer onboarding and reviewer installation access have not been exercised.
+Reviewer-owned setup requires a Mac with full Xcode, Python 3.9 or newer, Tailscale on the Mac and review device, and a harmless sample signed for that device and distribution method. These instructions and the pending support case are saved in App Store Connect; clean customer onboarding and reviewer installation access have not been exercised.
 
 1. Obtain the [source](https://github.com/alexmorris10x/deploy-link), inspect the installer, and run `bash scripts/install_ota_queue.sh` from the repository in a clean Mac login. It installs the user LaunchAgent and creates a private Tailscale Serve HTTPS endpoint.
 2. Publish the signed sample with `"$HOME/.local/share/deploy-link/bin/ota-queue" publish "/path/to/ReviewSample.app" --note "Harmless review sample"`.
