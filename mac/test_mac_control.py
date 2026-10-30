@@ -22,7 +22,7 @@ class MacServiceTests(unittest.TestCase):
         self.queue.mkdir()
         self.data = {'Label': control.LABEL, 'ProgramArguments': [
             '/usr/bin/python3', str(self.root / 'ota-queue'), '--root', str(self.queue),
-            'serve', '--base-url', 'https://example.test/', '--port', '8478'],
+            'serve', '--base-url', 'https://example.test:8443/', '--port', '8478'],
             'RunAtLoad': True, 'KeepAlive': True, 'CustomSetting': 'preserved'}
         self.plist.write_bytes(plistlib.dumps(self.data))
         self.override = patch.object(control, 'PLIST', self.plist)

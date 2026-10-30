@@ -57,13 +57,13 @@ if state.get("BackendState") != "Running" or not name:
     sys.exit("Open Tailscale, sign in, and connect this Mac before setup.")
 print(name)
 ')"
-base_url="${DEPLOY_LINK_OTA_BASE_URL:-https://${dns_name}/}"
+base_url="${DEPLOY_LINK_OTA_BASE_URL:-https://${dns_name}:8443/}"
 # Base URLs refer only to this Mac; a typo must not publish links to another host.
 "${python}" - "${base_url}" "${dns_name}" "${port}" <<'PY'
 import sys
 from urllib.parse import urlparse
 url = urlparse(sys.argv[1])
-if (url.scheme != 'https' or url.hostname != sys.argv[2] or url.port not in (None, 443)
+if (url.scheme != 'https' or url.hostname != sys.argv[2] or (url.port is not None and not 1 <= url.port <= 65535)
         or url.path not in ('', '/') or url.query or url.fragment or url.username is not None or url.password is not None):
     sys.exit('DEPLOY_LINK_OTA_BASE_URL must be this Mac\'s root Tailscale HTTPS URL.')
 try:
@@ -73,6 +73,7 @@ except ValueError:
 if not valid_port:
     sys.exit('DEPLOY_LINK_OTA_PORT must be between 1024 and 65535.')
 PY
+https_port="$("${python}" -c 'import sys; from urllib.parse import urlparse; print(urlparse(sys.argv[1]).port or 443)' "${base_url}")"
 
 # This is deliberately before installing files or stopping any existing service.
 # Adding our root leaves unrelated /path handlers intact. Conflicts fail closed.
@@ -115,7 +116,7 @@ PY
 
 # Configure only a missing endpoint; never reset Serve or touch Funnel.
 if [[ "${serve_state}" == configure ]]; then
-  "${tailscale}" serve --bg --https=443 --set-path=/ "http://127.0.0.1:${port}"
+  "${tailscale}" serve --bg --https="${https_port}" --set-path=/ "http://127.0.0.1:${port}"
 fi
 # A concurrent route change must not be mistaken for our endpoint.
 confirmed_state="$("${tailscale}" serve status --json | "${python}" "${repository_root}/ota/ota_queue.py" check-serve --base-url "${base_url}" --port "${port}")"
@@ -127,6 +128,11 @@ confirmed_state="$("${tailscale}" serve status --json | "${python}" "${repositor
 /bin/chmod 600 "${log_path}"
 domain="gui/$(id -u)"
 /bin/launchctl bootout "${domain}/${label}" 2>/dev/null || true
+# bootout can return while launchd is still removing the previous job.
+for _ in 1 2 3 4 5; do
+  /bin/launchctl print "${domain}/${label}" >/dev/null 2>&1 || break
+  /bin/sleep 1
+done
 /bin/launchctl bootstrap "${domain}" "${plist_path}"
 
 for _ in 1 2 3 4 5 6 7 8 9 10; do

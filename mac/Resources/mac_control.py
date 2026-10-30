@@ -47,7 +47,7 @@ def service_config():
     port = int(value('--port', '8477'))
     if (parsed.scheme != 'https' or not parsed.hostname or parsed.username is not None
             or parsed.password is not None or parsed.query or parsed.fragment
-            or parsed.path not in ('', '/') or parsed.port not in (None, 443)
+            or parsed.path not in ('', '/') or (parsed.port is not None and not 1 <= parsed.port <= 65535)
             or not 1024 <= port <= 65535):
         raise RuntimeError('The queue service needs a valid private HTTPS root address and local port.')
     return {'python': args[0], 'script': args[1],

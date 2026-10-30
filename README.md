@@ -44,7 +44,7 @@ cd deploy-link
 bash scripts/install_ota_queue.sh
 ```
 
-The installer sets up `com.10x.deploy-link-ota` as a login LaunchAgent and connects Tailscale Serve to loopback port 8477. It checks existing Serve/Funnel configuration rather than resetting unrelated services. Complete any Tailscale HTTPS setup it requests, then rerun. **Do not use Funnel or expose the queue publicly.** Reading and downloads are protected by your Tailscale/network rules, not by separate user accounts.
+The installer sets up `com.10x.deploy-link-ota` as a login LaunchAgent and connects private Tailscale HTTPS port 8443 to loopback port 8477. It checks existing Serve/Funnel configuration rather than resetting unrelated services. Complete any Tailscale HTTPS setup it requests, then rerun. **Do not use Funnel or expose the queue publicly.** Reading and downloads are protected by your Tailscale/network rules, not by separate user accounts.
 
 Default locations:
 

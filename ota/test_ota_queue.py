@@ -343,6 +343,19 @@ class ManagementCredentialTests(unittest.TestCase):
 
 
 class ServeRouteTests(unittest.TestCase):
+    def test_dedicated_https_port_preserves_existing_service(self) -> None:
+        config = {"TCP": {"443": {"HTTPS": True}}, "Web": {
+            "mac.example.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:3773"}}}
+        }}
+        url = "https://mac.example.ts.net:8443/"
+        self.assertEqual(ota_queue.serve_route_state(config, url, 8477), "configure")
+        config["Web"]["mac.example.ts.net:8443"] = {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8477"}}}
+        self.assertEqual(ota_queue.serve_route_state(config, url, 8477), "existing")
+        self.assertEqual(config["Web"]["mac.example.ts.net:443"]["Handlers"]["/"]["Proxy"], "http://127.0.0.1:3773")
+        config["AllowFunnel"] = {"mac.example.ts.net:8443": True}
+        with self.assertRaises(ValueError):
+            ota_queue.serve_route_state(config, url, 8477)
+
     def test_existing_route_is_preserved_and_unrelated_routes_are_allowed(self) -> None:
         config = {"TCP": {"443": {"HTTPS": True}}, "Web": {"mac.example.ts.net:443": {"Handlers": {
             "/": {"Proxy": "http://127.0.0.1:8477"}, "/other": {"Proxy": "http://127.0.0.1:8123"},

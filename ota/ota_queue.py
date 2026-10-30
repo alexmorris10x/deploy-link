@@ -740,7 +740,7 @@ def normalized_base_url(value: str) -> str:
     parsed = urlparse(value)
     if (parsed.scheme != "https" or not parsed.hostname or parsed.username is not None
             or parsed.password is not None or parsed.query or parsed.fragment
-            or parsed.path not in ("", "/") or parsed.port not in (None, 443)):
+            or parsed.path not in ("", "/") or (parsed.port is not None and not 1 <= parsed.port <= 65535)):
         raise ValueError("--base-url must be a root https URL without credentials, a path, query, or fragment")
     return value.rstrip("/") + "/"
 
@@ -749,13 +749,14 @@ def serve_route_state(config: dict, base_url: str, port: int) -> str:
     """Refuse a conflicting root/HTTPS port; leave all unrelated Serve routes alone."""
     if not isinstance(config, dict):
         raise ValueError("could not read the Tailscale Serve configuration")
-    hostname = urlparse(normalized_base_url(base_url)).hostname
-    endpoint = f"{hostname}:443"
+    parsed = urlparse(normalized_base_url(base_url))
+    https_port = str(parsed.port or 443)
+    endpoint = f"{parsed.hostname}:{https_port}"
     if (config.get("AllowFunnel") or {}).get(endpoint):
         raise ValueError("Tailscale Funnel is enabled on this HTTPS endpoint; Deploy Link requires a private tailnet endpoint")
-    tcp = (config.get("TCP") or {}).get("443")
+    tcp = (config.get("TCP") or {}).get(https_port)
     if tcp and (tcp.get("HTTPS") is not True or tcp.get("TCPForward")):
-        raise ValueError("Tailscale port 443 is already used by a different service")
+        raise ValueError(f"Tailscale port {https_port} is already used by a different service")
     handlers = (((config.get("Web") or {}).get(endpoint) or {}).get("Handlers") or {})
     # These paths would shadow the queue even if its root route were available.
     for path in handlers:
