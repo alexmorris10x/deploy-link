@@ -1,0 +1,10 @@
+Deploy Link
+Copyright 2026 Alex Morris
+
+Deploy Link's original source, documentation, and artwork are licensed under
+the Apache License, Version 2.0. See LICENSE.
+
+Apple frameworks and the Python runtime are supplied separately; this
+project's license does not relicense them. Tailscale is installed separately
+and is not bundled. Their names and marks belong to their respective owners.
+Deploy Link is not affiliated with Apple or Tailscale.

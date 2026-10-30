@@ -1,96 +1,88 @@
 # Deploy Link
 
-Delivers Alex's signed iOS development builds from the Mac to his iPhone and
-iPad, over Wi-Fi or cellular, through install links. It is the only device
-delivery route since 21 October 2026; the older warm-session direct install
-(RemotePairing over Tailscale, the macOS status app and the probe app) was
-removed and lives on in the `archive/direct-install` tag.
+A private queue for your signed iOS development builds. Publish a build on your Mac, then choose it on your iPhone or iPad and confirm the iOS installation prompt. The iOS client and Mac Python server are free for the initial launch, with original source under [Apache 2.0](LICENSE).
+
+- [Setup](docs/site/setup.html), [support](docs/site/support.html), [privacy](docs/site/privacy.html)
+- [Product specification](docs/SPEC.md) and [remaining launch work](docs/TODO.md)
+- [Distribution](docs/release/distribution.md), [App Store metadata](docs/release/app-store-metadata.md), and [App Review question](docs/release/app-review-question.md)
+
+The native App Store release is being prepared. Apple's acceptance of the development-build installation workflow remains unresolved; an App Store record is not approval or a public download. The server also has a browser queue page.
+
+## How it works
 
 ```text
-signed .app -> ota-queue publish -> ~/.local/share/ios-ota/queue/<id>/   (on the Mac)
-                                          |
-        loopback server :8477 <- tailscale serve (tailnet-only HTTPS)
-                                          |
-          Deploy Link app on iPhone/iPad -> Install -> iOS prompt -> download + install
+signed .app or .ipa -> private queue on your Mac
+                              |
+              loopback server -> Tailscale Serve HTTPS
+                              |
+              iPhone/iPad -> choose build -> iOS install prompt
 ```
 
-## How a link works
+The server packages a signed device app, reads its bundle/version/profile metadata, and serves its manifest and IPA. The iOS client shows the queue and opens an `itms-services` URL when you choose Install. iOS downloads and validates the package; Deploy Link neither signs apps nor bypasses provisioning.
 
-- `ota-queue publish` zips the signed `.app` into an IPA, reads its bundle ID,
-  version, build, icon and provisioning profile, and stores it on the Mac in
-  `~/.local/share/ios-ota/queue/<release id>/` (`app.ipa`, `icon.png`,
-  `release.json`, `downloads.jsonl`). Nothing is uploaded anywhere else.
-- The `com.10x.deploy-link-ota` LaunchAgent serves that folder on
-  `127.0.0.1:8477`; `tailscale serve` publishes it at the Mac's private
-  tailnet HTTPS address. Only devices on Alex's tailnet can reach it, and only
-  devices in the app's provisioning profile can install a build.
-- Each release has a manifest (`/r/<id>/manifest.plist`). The app hands iOS an
-  `itms-services://` link to it; iOS asks Alex to confirm, then downloads the
-  IPA straight from the Mac and installs it. The Mac must be awake and online.
-- The app tags its links with the device (`?device=<id>&family=iPhone`), so the
-  Mac knows which download is running on which device and remembers, per
-  device, the last build of each app that finished downloading
-  (`queue/devices.json`). That memory outlives the release itself.
+**Downloaded means the server completed the file transfer. It does not prove installation succeeded.** Open the target app to confirm it installed. The client can identify its own running version, but it cannot inspect other installed apps or learn about builds delivered outside this queue.
 
-## What the app does
+## Set up your Mac
 
-- Lists the queue grouped by app, newest build first, with older builds folded
-  away, and says which build of each app is on this device.
-- **Install / Update** when the build is new to the device; **Installed** (asks
-  before installing it again) when the device already has that exact build; a
-  plain **Install** that asks first when the build is older than the device's.
-- While a build is downloading it shows the progress and blocks a second
-  install of any build of that app on the same device. After tapping Install it
-  waits up to a minute for the iOS prompt to be confirmed.
-- Checks a release still exists before installing; one that left the queue
-  drops off the list with a note. If the device's build has left the queue, the
-  app says so.
-- Swipe a build to remove it from the Mac's queue.
+Requires macOS, Python 3.9 or newer, Tailscale on both devices, and a valid signed iOS build for the intended devices/distribution method. The Mac must remain awake and signed in while serving. Tailscale has its own [plans](https://tailscale.com/pricing) and [terms](https://tailscale.com/terms).
 
-iOS gives no installation readback to an install link, so "on this device"
-means the device finished downloading that build from Deploy Link. A build
-installed some other way (Xcode, USB) isn't known.
-
-## How builds are cleared out
-
-- Publishing keeps the newest five releases of each app and deletes the rest.
-- Every night at 03:50 the Mac's `mac-dev-cleanup` job runs `ota-queue prune`,
-  which keeps only the newest build of each app.
-- Releases whose provisioning profile has expired are deleted (on publish and
-  whenever the app refreshes).
-- `ota-queue remove <id>`, or a swipe in the app, deletes one release.
-
-## Commands
+Clone this repository or extract its source ZIP. Read the installer, then run it locally:
 
 ```sh
-ota=~/.local/share/deploy-link/bin/ota-queue
-"$ota" publish /path/to/App.app --note "What changed"
-"$ota" list      # newest first: app ID, build, note, downloads per device
-"$ota" devices   # the last build of each app every device downloaded
-"$ota" prune     # keep only the newest build of each app (--keep N)
-"$ota" remove <release-id>
+git clone https://github.com/alexmorris10x/deploy-link.git
+cd deploy-link
+bash scripts/install_ota_queue.sh
 ```
 
-`scripts/install_ota_queue.sh` installs the server as `ota-queue` with its
-LaunchAgent and makes sure `tailscale serve` proxies to port 8477. Rerun it
-from the main checkout after changing `ota/ota_queue.py`. Run
-`python3 ota/test_ota_queue.py` for the fixture tests.
+The installer sets up `com.10x.deploy-link-ota` as a login LaunchAgent and connects Tailscale Serve to loopback port 8477. It checks existing Serve/Funnel configuration rather than resetting unrelated services. Complete any Tailscale HTTPS setup it requests, then rerun. **Do not use Funnel or expose the queue publicly.** Reading and downloads are protected by your Tailscale/network rules, not by separate user accounts.
 
-## The app
+Default locations:
 
-[`companion/`](companion/) is the Deploy Link app (XcodeGen `project.yml`,
-iPhone and iPad). Debug builds **Deploy Link Dev** (`com.10x.deploylink.dev`,
-orange DEV banner icon in `AppIcon-Dev`), the build Alex keeps installed;
-Release keeps `com.10x.deploylink`. The icon is drawn in
-[`docs/AppIcon.svg`](docs/AppIcon.svg): a broad jade download ribbon over a
-solid pearl phone, on dark evergreen. Like Memex's page and bookmark, it uses
-close cropping, overlapping surfaces and soft shadows to stay recognizable
-at Home Screen size. The arrow and phone's top remain above the Dev banner;
-iOS supplies the outer mask. To regenerate the original artwork,
-render it with `rsvg-convert -w 1024 -h 1024 docs/AppIcon.svg | magick - -background black -alpha remove -alpha off PNG24:companion/DeployLinkCompanion/Assets.xcassets/AppIcon.appiconset/AppIcon.png`.
-Regenerate the Dev icon with
-`~/bin/ios-dev-icon --catalog companion/DeployLinkCompanion/Assets.xcassets/AppIcon.appiconset companion/DeployLinkCompanion/Assets.xcassets/AppIcon-Dev.appiconset`. Build it with the normal Debug device
-build and publish it to the queue like any other app; it marks the build it is
-running, so updating it through itself is the end-to-end test.
+| Item | Path |
+| --- | --- |
+| Installed command | `~/.local/share/deploy-link/bin/ota-queue` |
+| Builds and transfer history | `~/.local/share/ios-ota/queue/` |
+| Management credential | `~/.local/share/ios-ota/queue/.management-token` |
+| Runtime log | `~/.local/share/deploy-link/logs/ota-queue.log` |
+| Login agent | `~/Library/LaunchAgents/com.10x.deploy-link-ota.plist` |
 
-Do not use Tailscale Funnel for private development builds.
+The installer prints your own HTTPS queue address. Open it in Safari on your Tailscale-connected device, or enter it in the iOS app's Settings. There is no personal/default server bundled into the app. It accepts an HTTPS host root without credentials, query, or fragment.
+
+## Publish and manage builds
+
+```sh
+"$HOME/.local/share/deploy-link/bin/ota-queue" publish "/path/to/YourApp.app" --note "What changed"
+"$HOME/.local/share/deploy-link/bin/ota-queue" list
+"$HOME/.local/share/deploy-link/bin/ota-queue" devices
+```
+
+A signed `.ipa` can replace the `.app` argument. Simulator builds and unsigned packages are not installable. Apple can reject installation because of profile expiry, device registration, certificate status, or OS compatibility even after a transfer succeeds.
+
+The queue groups builds by app, newest first. The client shows notes, transfer progress, and completed-download history, asks before repeating or downgrading a download, and avoids overlapping downloads of the same app on one device.
+
+Deleting from iOS needs an optional management token. Copy it locally without printing it:
+
+```sh
+"$HOME/.local/share/deploy-link/bin/ota-queue" admin-token --copy
+```
+
+Paste it into **Management token (optional)** in Settings through a private transfer method. It stays in the device's Keychain for that server. Browsing and downloading do not need it. `admin-token --rotate --copy` replaces the server token and revokes existing management access. Never put a token in a URL, issue, screenshot, or shared log.
+
+Queue removal affects every device's ability to download that package; it does not uninstall the app from devices:
+
+```sh
+"$HOME/.local/share/deploy-link/bin/ota-queue" remove <release-id>
+"$HOME/.local/share/deploy-link/bin/ota-queue" prune --keep 1
+```
+
+Publishing retains the newest five releases per app by default (`--keep N` changes that). Expired releases are removed on publish and queue refresh. A separate `devices.json` retains each device's last completed downloads after releases leave the queue. The public installer does not add a nightly cleanup schedule. Keep original builds elsewhere if you need an archive.
+
+## Update, build, and contribute
+
+Update the source and rerun the installer to replace the server while preserving the queue and token. Custom-path and uninstall instructions are in [distribution](docs/release/distribution.md) and [setup](docs/site/setup.html).
+
+The iOS app is in `companion/` and uses XcodeGen. Run `xcodegen generate` there. The **DeployLinkCompanion** scheme builds **Deploy Link Dev** (`com.10x.deploylink.dev`) in Debug and **Deploy Link** (`com.10x.deploylink`) in Release. Use your own authorized signing team; the maintainer's checked-in team does not grant signing rights. Maintainer builds use `~/bin/ios-dev-build`.
+
+The launch change's 25 Python server tests passed, and a signed iOS device build passed. Those checks do not establish installation acceptance for another developer's provisioning or App Store approval. See [TODO](docs/TODO.md) for the remaining customer setup and release inputs. Run `python3 ota/test_ota_queue.py` when changing the server.
+
+No app build, private provisioning file, management token, or personal server address belongs in a public issue. Both source components are inspectable; that is not a security-audit claim.

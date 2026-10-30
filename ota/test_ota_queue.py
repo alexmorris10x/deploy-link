@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+import argparse
+import contextlib
+import io
 import json
 import os
 import plistlib
@@ -12,9 +15,11 @@ import threading
 import unittest
 import urllib.request
 import zipfile
+from email.message import Message
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ota_queue  # noqa: E402
@@ -125,6 +130,10 @@ class ServerTests(unittest.TestCase):
         self.record = self.queue.publish(make_app(work, "7"), note="try me")
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), ota_queue.make_handler(self.queue, BASE_URL))
         self.server.RequestHandlerClass.log_message = lambda *args: None
+        self.original_log_request = self.server.RequestHandlerClass.log_request
+        self.server.RequestHandlerClass.log_request = lambda *args: None
+        self.credential = ota_queue.ManagementCredential(self.queue.root)
+        self.management_token = self.credential.read()
         thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         thread.start()
         self.addCleanup(self.server.server_close)
@@ -213,13 +222,53 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(json.loads(self.get("/api/releases")[2])["releases"][0]["activeDownloads"], [])
 
     def test_delete_removes_release(self) -> None:
-        request = urllib.request.Request(f"{self.local}/api/releases/{self.record['id']}", method="DELETE")
+        request = urllib.request.Request(f"{self.local}/api/releases/{self.record['id']}", method="DELETE",
+                                         headers={"Authorization": "Bearer " + self.management_token})
         with urllib.request.urlopen(request) as response:
             self.assertEqual(response.status, 200)
         self.assertEqual(json.loads(self.get("/api/releases")[2])["releases"], [])
         with self.assertRaises(urllib.error.HTTPError) as caught:
             urllib.request.urlopen(request)
         self.assertEqual(caught.exception.code, 404)
+
+    def test_delete_requires_management_capability(self) -> None:
+        target = f"{self.local}/api/releases/{self.record['id']}"
+        for headers, suffix in (({}, ""), ({"Authorization": "Bearer " + "0" * 64}, ""),
+                                ({}, "?token=" + self.management_token)):
+            request = urllib.request.Request(target + suffix, method="DELETE", headers=headers)
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                urllib.request.urlopen(request)
+            self.assertEqual(caught.exception.code, 401)
+            self.assertIn("Bearer", caught.exception.headers["WWW-Authenticate"])
+            self.assertTrue(self.queue.release_dir(self.record["id"]).is_dir())
+
+    def test_management_validation_and_rotation(self) -> None:
+        def request(token):
+            return urllib.request.Request(self.local + "/api/management", headers={"Authorization": "Bearer " + token})
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.get("/api/management")
+        self.assertEqual(caught.exception.code, 401)
+        with urllib.request.urlopen(request(self.management_token)) as response:
+            self.assertEqual(json.load(response), {"canDelete": True})
+        self.credential.rotate()
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request(self.management_token))
+        self.assertEqual(caught.exception.code, 401)
+        with urllib.request.urlopen(request(self.credential.read())) as response:
+            self.assertEqual(response.status, 200)
+
+    def test_management_credential_is_never_served_or_logged(self) -> None:
+        self.server.RequestHandlerClass.log_request = self.original_log_request
+        output = io.StringIO()
+        with contextlib.redirect_stderr(output):
+            self.get("/api/releases?token=" + self.management_token)
+            for path in ("/.management-token", "/r/" + self.record["id"] + "/.management-token"):
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    self.get(path)
+                self.assertEqual(caught.exception.code, 404)
+        self.assertTrue(self.management_token not in output.getvalue(), "HTTP logs disclosed a management credential")
+        self.assertNotIn("token=", output.getvalue())
+        self.assertTrue(self.management_token.encode() not in self.get("/api/releases")[2], "The feed disclosed a management credential")
 
     def test_html_page_and_unknown_paths(self) -> None:
         _, content_type, body = self.get("/")
@@ -230,6 +279,97 @@ class ServerTests(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as caught:
                 self.get(path)
             self.assertEqual(caught.exception.code, 404)
+
+
+class ManagementCredentialTests(unittest.TestCase):
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.work = Path(temporary.name)
+        self.credential = ota_queue.ManagementCredential(self.work / "queue")
+
+    @staticmethod
+    def headers(token: str) -> Message:
+        headers = Message()
+        headers["Authorization"] = "Bearer " + token
+        return headers
+
+    def test_secret_creation_permissions_and_preservation(self) -> None:
+        self.credential.ensure()
+        token = self.credential.read()
+        self.assertTrue(ota_queue.MANAGEMENT_TOKEN.fullmatch(token) is not None, "Invalid credential format")
+        self.assertEqual(self.credential.path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.credential.path.parent.stat().st_mode & 0o777, 0o700)
+        self.credential.ensure()
+        self.assertTrue(self.credential.read() == token, "Repeated setup rotated the credential")
+        with mock.patch.object(ota_queue.hmac, "compare_digest", wraps=ota_queue.hmac.compare_digest) as comparison:
+            self.assertTrue(self.credential.authorizes(self.headers(token)))
+            self.assertEqual(comparison.call_count, 1)
+
+    def test_invalid_permissions_and_duplicate_headers_fail_closed(self) -> None:
+        self.credential.ensure()
+        headers = self.headers(self.credential.read())
+        headers["Authorization"] = headers["Authorization"]
+        self.assertFalse(self.credential.authorizes(headers))
+        self.credential.path.chmod(0o644)
+        with self.assertRaises(ValueError):
+            self.credential.ensure()
+        self.assertFalse(self.credential.authorizes(self.headers("0" * 64)))
+
+    def test_symlinked_token_or_queue_is_refused(self) -> None:
+        target = self.work / "elsewhere"
+        target.write_text("unrelated content")
+        self.credential.path.parent.mkdir()
+        self.credential.path.symlink_to(target)
+        with self.assertRaises((OSError, ValueError)):
+            self.credential.ensure()
+        self.assertEqual(target.read_text(), "unrelated content")
+        linked_root = self.work / "linked-queue"
+        linked_root.symlink_to(self.credential.path.parent)
+        with self.assertRaises(ValueError):
+            ota_queue.ManagementCredential(linked_root).ensure()
+
+    def test_admin_copy_never_prints_the_secret(self) -> None:
+        args = argparse.Namespace(root=self.credential.path.parent, rotate=False, copy=True)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), mock.patch.object(ota_queue.sys, "platform", "darwin"), \
+                mock.patch.object(ota_queue.subprocess, "run") as clipboard:
+            ota_queue.command_admin_token(args)
+        token = self.credential.read()
+        self.assertTrue(token not in output.getvalue(), "The admin command disclosed the token")
+        self.assertEqual(clipboard.call_count, 1)
+        self.assertEqual(clipboard.call_args.args[0], ["/usr/bin/pbcopy"])
+        self.assertTrue(clipboard.call_args.kwargs["input"] == token.encode("ascii"), "Clipboard received the wrong credential")
+
+
+class ServeRouteTests(unittest.TestCase):
+    def test_existing_route_is_preserved_and_unrelated_routes_are_allowed(self) -> None:
+        config = {"TCP": {"443": {"HTTPS": True}}, "Web": {"mac.example.ts.net:443": {"Handlers": {
+            "/": {"Proxy": "http://127.0.0.1:8477"}, "/other": {"Proxy": "http://127.0.0.1:8123"},
+        }}}}
+        original = json.dumps(config, sort_keys=True)
+        self.assertEqual(ota_queue.serve_route_state(config, BASE_URL, 8477), "existing")
+        self.assertEqual(json.dumps(config, sort_keys=True), original)
+        del config["Web"]["mac.example.ts.net:443"]["Handlers"]["/"]
+        self.assertEqual(ota_queue.serve_route_state(config, BASE_URL, 8477), "configure")
+        self.assertEqual(ota_queue.serve_route_state({}, BASE_URL, 8477), "configure")
+
+    def test_conflicting_root_funnel_tcp_and_api_routes_are_refused(self) -> None:
+        configs = [
+            {"Web": {"mac.example.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:9999"}}}}},
+            {"AllowFunnel": {"mac.example.ts.net:443": True}},
+            {"TCP": {"443": {"TCPForward": "127.0.0.1:9000"}}},
+            {"Web": {"mac.example.ts.net:443": {"Handlers": {"/api/": {"Proxy": "http://127.0.0.1:9000"}}}}},
+        ]
+        for config in configs:
+            with self.assertRaises(ValueError):
+                ota_queue.serve_route_state(config, BASE_URL, 8477)
+
+    def test_base_url_rejects_embedded_credentials_and_paths(self) -> None:
+        for value in ("http://mac.example.ts.net", "https://name:password@mac.example.ts.net/",
+                      "https://mac.example.ts.net/?token=example", "https://mac.example.ts.net/queue/"):
+            with self.assertRaises(ValueError):
+                ota_queue.normalized_base_url(value)
 
 
 if __name__ == "__main__":

@@ -62,6 +62,18 @@ struct ReleaseListView: View {
 
     @ViewBuilder
     private var content: some View {
+        if !store.hasServer {
+            ContentUnavailableView {
+                Label("Your builds, from your Mac", systemImage: "desktopcomputer")
+            } description: {
+                Text("Install the free Deploy Link server on your Mac, connect both devices to Tailscale, then enter the HTTPS address from setup. Your Mac must stay awake. Builds must be signed for this device.")
+            } actions: {
+                Button("Connect Your Mac") { showingSettings = true }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("deploylink.connect")
+                Link("Mac setup guide", destination: ReleaseStore.setupURL)
+            }
+        } else {
         switch store.state {
         case .idle:
             checking
@@ -103,6 +115,7 @@ struct ReleaseListView: View {
                 }
             }
         }
+        }
     }
 
     private func alert(for confirmation: Confirmation) -> Alert {
@@ -112,14 +125,14 @@ struct ReleaseListView: View {
         case .reinstall:
             return Alert(
                 title: Text("Install \(release.versionLabel) again?"),
-                message: Text("This \(device) already has \(release.title) \(release.versionLabel)."),
+                message: Text("This \(device) previously downloaded \(release.title) \(release.versionLabel). iOS does not report whether installation completed."),
                 primaryButton: .default(Text("Install Again")) { Task { await store.install(release) } },
                 secondaryButton: .cancel()
             )
         case .downgrade:
             return Alert(
                 title: Text("Install an older build?"),
-                message: Text("This \(device) has \(confirmation.installed?.versionLabel ?? "a newer build"). \(release.versionLabel) is older."),
+                message: Text("This \(device) last downloaded \(confirmation.installed?.versionLabel ?? "a newer build"). \(release.versionLabel) is older; installation may replace the newer app."),
                 primaryButton: .destructive(Text("Install Older Build")) { Task { await store.install(release) } },
                 secondaryButton: .cancel()
             )
@@ -163,14 +176,16 @@ private struct AppSection: View {
         let installed = store.installedBuild(of: release.bundleIdentifier)
         return ReleaseRow(release: release, isLatest: isLatest, state: store.installState(of: release)) { state in
             switch state {
-            case .installed: confirm(.init(kind: .reinstall, release: release, installed: installed))
+            case .downloaded: confirm(.init(kind: .reinstall, release: release, installed: installed))
             case .older: confirm(.init(kind: .downgrade, release: release, installed: installed))
             default: Task { await store.install(release) }
             }
         }
         .swipeActions {
-            Button("Remove", systemImage: "trash", role: .destructive) {
-                confirm(.init(kind: .delete, release: release, installed: installed))
+            if store.canManage {
+                Button("Remove", systemImage: "trash", role: .destructive) {
+                    confirm(.init(kind: .delete, release: release, installed: installed))
+                }
             }
         }
     }
@@ -180,12 +195,12 @@ private struct AppSection: View {
         if let installed = store.installedBuild(of: bundleIdentifier) {
             let gone = installed.available ? "" : " — no longer in the queue"
             if let date = installed.date {
-                Text("On this \(store.family): \(installed.versionLabel), installed \(date, style: .relative) ago\(gone)")
+                Text("Downloaded on this \(store.family): \(installed.versionLabel), \(date, style: .relative) ago\(gone). Installation is not confirmed.")
             } else {
-                Text("On this \(store.family): \(installed.versionLabel)\(gone)")
+                Text("Running on this \(store.family): \(installed.versionLabel)\(gone)")
             }
         } else {
-            Text("Not installed on this \(store.family) from Deploy Link")
+            Text("No completed download recorded for this \(store.family)")
         }
     }
 }
@@ -246,8 +261,8 @@ private struct ReleaseRow: View {
         case .waiting:
             ProgressView()
                 .frame(width: 34, height: 34)
-        case .installed:
-            Button("Installed") { tap(state) }
+        case .downloaded:
+            Button("Downloaded") { tap(state) }
                 .buttonStyle(.bordered)
                 .buttonBorderShape(.capsule)
         case .older, .busy:
@@ -268,8 +283,8 @@ private struct ReleaseRow: View {
         case .running:
             Label("The build you're running", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)
-        case .installed:
-            Label("On this device", systemImage: "checkmark.circle.fill")
+        case .downloaded:
+            Label("Downloaded; installation unconfirmed", systemImage: "arrow.down.circle.fill")
                 .foregroundStyle(.green)
         case .waiting:
             Label("Tap Install on the iOS prompt", systemImage: "hourglass")
@@ -278,10 +293,10 @@ private struct ReleaseRow: View {
             Label("Downloading from the Mac…", systemImage: "arrow.down.circle")
                 .foregroundStyle(.blue)
         case .busy:
-            Label("Another build of this app is installing", systemImage: "hourglass")
+            Label("Another build of this app is downloading", systemImage: "hourglass")
                 .foregroundStyle(.secondary)
         case .older:
-            Label("Older than the build on this device", systemImage: "arrow.uturn.backward.circle")
+            Label("Older than the last downloaded build", systemImage: "arrow.uturn.backward.circle")
                 .foregroundStyle(.secondary)
         case .install, .update:
             if let others = release.downloadedBy, !others.isEmpty {
@@ -309,39 +324,65 @@ private struct ReleaseRow: View {
 private struct SettingsView: View {
     @Environment(ReleaseStore.self) private var store
     @Environment(\.dismiss) private var dismiss
+    @State private var address = ""
+    @State private var token = ""
+    @State private var error: String?
 
     var body: some View {
-        @Bindable var store = store
         NavigationStack {
             Form {
                 Section {
-                    TextField("https://…", text: $store.serverURL)
+                    TextField("https://your-mac.your-tailnet.ts.net", text: $address)
                         .keyboardType(.URL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    Button("Use the Mac's default address") {
-                        store.serverURL = ReleaseStore.defaultServer
-                    }
-                } header: {
-                    Text("Mac address")
-                } footer: {
-                    Text("The Mac's private Tailscale address. Builds download straight from the Mac over Wi-Fi or cellular while Tailscale is connected on this device.")
+                        .accessibilityIdentifier("deploylink.server")
+                    Link("Set up your Mac", destination: ReleaseStore.setupURL)
+                } header: { Text("Mac address") } footer: {
+                    Text("Use the HTTPS address printed by the Mac installer. Connect Tailscale on both devices. The Mac must be awake and the builds must be signed for your device.")
                 }
-                Section("This app") {
+                Section {
+                    SecureField("Management token (optional)", text: $token)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    if store.canManage {
+                        Label("A token is saved for your current Mac", systemImage: "key.fill")
+                        Button("Remove saved token", role: .destructive) { store.forgetManagementToken() }
+                    }
+                } header: { Text("Manage the queue") } footer: {
+                    Text("Only needed to remove builds. On your Mac, run ota-queue admin-token --copy, then paste here. The token stays in this device’s Keychain. Leave blank to keep an existing token for this address.")
+                }
+                Section("About") {
                     LabeledContent("Version", value: AppInfo.version)
                     LabeledContent("Build", value: AppInfo.build)
+                    Link("Privacy", destination: URL(string: "https://alexmorris10x.github.io/deploy-link/privacy.html")!)
+                    Link("Support", destination: URL(string: "https://alexmorris10x.github.io/deploy-link/support.html")!)
+                    Text("Downloaded means the transfer completed. Confirm installation on your Home Screen or in the installed app.")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
             }
-            .navigationTitle("Settings")
+            .navigationTitle(store.hasServer ? "Settings" : "Connect your Mac")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        dismiss()
-                        Task { await store.refresh() }
+                    Button("Save") {
+                        if store.configure(address: address, token: token) {
+                            token = ""
+                            dismiss()
+                            Task { await store.refresh() }
+                        } else {
+                            error = store.notice
+                            store.notice = nil
+                        }
                     }
+                    .disabled(address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
+            .onAppear { address = store.serverURL }
+            .alert("Could not save", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(error ?? "") }
         }
     }
 }

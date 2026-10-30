@@ -17,21 +17,25 @@ reinstalling a build the device already has.
 
 Only devices listed in the app's provisioning profile can install a release.
 Releases leave the queue when a newer one pushes them past the newest `keep`
-per app, when their provisioning profile expires, on `remove`, and every night
-when the Mac's `mac-dev-cleanup` runs `prune` (newest build of each app only).
+per app, when their provisioning profile expires, or on `remove` and `prune`.
+Remote deletion requires a separate management credential; reading and
+downloading are authorized by access to your Tailscale network.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import html
 import json
 import os
 import plistlib
 import re
+import secrets
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import threading
@@ -43,17 +47,88 @@ from typing import Optional
 from urllib.parse import parse_qs, quote, urlencode, urlparse
 
 SCHEMA_VERSION = 1
-DEFAULT_ROOT = Path("~/.local/share/ios-ota/queue").expanduser()
+DEFAULT_ROOT = Path(os.environ.get("DEPLOY_LINK_QUEUE_ROOT", "~/.local/share/ios-ota/queue")).expanduser()
 DEFAULT_PORT = 8477
 DEFAULT_KEEP = 5
 RELEASE_ID = re.compile(r"^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$")
 DEVICE_ID = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 FAMILIES = ("iPhone", "iPad")
 CHUNK = 1024 * 1024
+MANAGEMENT_TOKEN_NAME = ".management-token"
+MANAGEMENT_TOKEN = re.compile(r"^[0-9a-f]{64}$")
 
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def private_directory(path: Path) -> None:
+    """Create an owner-only directory without following a substituted final symlink."""
+    if path.is_symlink():
+        raise ValueError("the queue directory must not be a symbolic link")
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    info = path.stat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+        raise ValueError("the queue directory must be owned by the current user")
+    path.chmod(0o700)
+
+
+class ManagementCredential:
+    """A local capability for deletion; never part of feed data, URLs, or logs."""
+
+    def __init__(self, queue_root: Path):
+        self.path = queue_root / MANAGEMENT_TOKEN_NAME
+
+    def ensure(self) -> None:
+        private_directory(self.path.parent)
+        try:
+            fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        except FileExistsError:
+            self.read()
+            return
+        with os.fdopen(fd, "w", encoding="ascii") as output:
+            output.write(secrets.token_hex(32) + "\n")
+            output.flush()
+            os.fsync(output.fileno())
+
+    def read(self) -> str:
+        fd = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, "r", encoding="ascii") as source:
+            info = os.fstat(source.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o600:
+                raise ValueError("the management credential must be an owner-only regular file (mode 600)")
+            token = source.read(66).strip()
+        if not MANAGEMENT_TOKEN.fullmatch(token):
+            raise ValueError("the management credential is invalid; restore it or rotate it locally")
+        return token
+
+    def rotate(self) -> None:
+        private_directory(self.path.parent)
+        if self.path.exists() or self.path.is_symlink():
+            self.read()
+        fd, name = tempfile.mkstemp(prefix=".management-token-", dir=self.path.parent)
+        temporary = Path(name)
+        try:
+            with os.fdopen(fd, "w", encoding="ascii") as output:
+                output.write(secrets.token_hex(32) + "\n")
+                output.flush()
+                os.fsync(output.fileno())
+            temporary.replace(self.path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def authorizes(self, headers) -> bool:
+        values = headers.get_all("Authorization", [])
+        if len(values) != 1 or not values[0].startswith("Bearer "):
+            return False
+        supplied = values[0][7:]
+        if not MANAGEMENT_TOKEN.fullmatch(supplied):
+            return False
+        try:
+            expected = self.read()
+        except (OSError, ValueError, UnicodeError):
+            return False
+        return hmac.compare_digest(supplied, expected)
 
 
 # ---------------------------------------------------------------------------
@@ -316,8 +391,7 @@ class Queue:
 
     def publish(self, source: Path, note: str = "", keep: int = DEFAULT_KEEP) -> dict:
         source = source.expanduser().resolve()
-        self.root.mkdir(parents=True, exist_ok=True)
-        os.chmod(self.root, 0o700)
+        private_directory(self.root)
         staging = Path(tempfile.mkdtemp(prefix=".publish-", dir=self.root))
         try:
             ipa = staging / "app.ipa"
@@ -513,11 +587,21 @@ a.button {{ background: #225cbf; border-radius: 12px; color: white; font-weight:
 
 
 def make_handler(queue: Queue, base_url: str):
+    credential = ManagementCredential(queue.root)
+    credential.ensure()
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "DeployLinkOTA/1"
 
         def log_message(self, format: str, *args) -> None:  # noqa: A002 - stdlib signature
-            sys.stderr.write(f"{utc_now()} {self.command} {self.path.split('?')[0]} {format % args}\n")
+            # BaseHTTPRequestHandler includes raw request lines in these args.
+            # Never log headers, URLs, or malformed input that could contain a key.
+            sys.stderr.write(f"{utc_now()} HTTP request error\n")
+
+        def log_request(self, code="-", size="-") -> None:
+            method = self.command if self.command in ("GET", "HEAD", "DELETE") else "OTHER"
+            status = str(code) if str(code).isdigit() else "-"
+            sys.stderr.write(f"{utc_now()} {method} {status}\n")
 
         def send_bytes(self, status: int, content_type: str, payload: bytes, head: bool = False) -> None:
             self.send_response(status)
@@ -531,6 +615,20 @@ def make_handler(queue: Queue, base_url: str):
         def not_found(self, head: bool = False) -> None:
             self.send_bytes(404, "application/json", b'{"error":"not found"}\n', head)
 
+        def require_management(self, head: bool = False) -> bool:
+            if credential.authorizes(self.headers):
+                return True
+            payload = b'{"error":"management token required"}\n'
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Bearer realm="Deploy Link management"')
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if not head:
+                self.wfile.write(payload)
+            return False
+
         def do_HEAD(self) -> None:  # noqa: N802 - stdlib naming
             self.route(head=True)
 
@@ -541,6 +639,8 @@ def make_handler(queue: Queue, base_url: str):
             parts = urlparse(self.path).path.strip("/").split("/")
             if len(parts) != 3 or parts[:2] != ["api", "releases"]:
                 return self.not_found()
+            if not self.require_management():
+                return
             try:
                 queue.remove(parts[2])
             except (KeyError, OSError):
@@ -554,6 +654,10 @@ def make_handler(queue: Queue, base_url: str):
         def route(self, head: bool) -> None:
             url = urlparse(self.path)
             path = url.path
+            if path == "/api/management":
+                if self.require_management(head):
+                    self.send_bytes(200, "application/json", b'{"canDelete":true}\n', head)
+                return
             if path in ("/", "/index.html"):
                 return self.send_bytes(200, "text/html; charset=utf-8", index_page(self.releases()), head)
             if path == "/api/releases":
@@ -634,9 +738,36 @@ def make_handler(queue: Queue, base_url: str):
 
 def normalized_base_url(value: str) -> str:
     parsed = urlparse(value)
-    if parsed.scheme != "https" or not parsed.netloc or parsed.query or parsed.fragment:
-        raise ValueError("--base-url must be an https URL without a query or fragment")
+    if (parsed.scheme != "https" or not parsed.hostname or parsed.username is not None
+            or parsed.password is not None or parsed.query or parsed.fragment
+            or parsed.path not in ("", "/") or parsed.port not in (None, 443)):
+        raise ValueError("--base-url must be a root https URL without credentials, a path, query, or fragment")
     return value.rstrip("/") + "/"
+
+
+def serve_route_state(config: dict, base_url: str, port: int) -> str:
+    """Refuse a conflicting root/HTTPS port; leave all unrelated Serve routes alone."""
+    if not isinstance(config, dict):
+        raise ValueError("could not read the Tailscale Serve configuration")
+    hostname = urlparse(normalized_base_url(base_url)).hostname
+    endpoint = f"{hostname}:443"
+    if (config.get("AllowFunnel") or {}).get(endpoint):
+        raise ValueError("Tailscale Funnel is enabled on this HTTPS endpoint; Deploy Link requires a private tailnet endpoint")
+    tcp = (config.get("TCP") or {}).get("443")
+    if tcp and (tcp.get("HTTPS") is not True or tcp.get("TCPForward")):
+        raise ValueError("Tailscale port 443 is already used by a different service")
+    handlers = (((config.get("Web") or {}).get(endpoint) or {}).get("Handlers") or {})
+    # These paths would shadow the queue even if its root route were available.
+    for path in handlers:
+        if path == "/index.html" or path.rstrip("/") in ("/api", "/r") or path.startswith(("/api/", "/r/")):
+            raise ValueError("a Tailscale Serve route already uses a Deploy Link API or download path")
+    root = handlers.get("/")
+    if root is None:
+        return "configure"
+    proxy = root.get("Proxy")
+    if len(root) == 1 and proxy in (f"http://127.0.0.1:{port}", f"http://localhost:{port}"):
+        return "existing"
+    raise ValueError("Tailscale HTTPS already has a different root endpoint; choose a separate host or move that route before installing")
 
 
 # ---------------------------------------------------------------------------
@@ -665,7 +796,7 @@ def command_list(args: argparse.Namespace) -> None:
 
 
 def command_prune(args: argparse.Namespace) -> None:
-    """Keep the newest `--keep` releases of every app (the nightly Mac cleanup runs this with 1)."""
+    """Keep the newest `--keep` releases of every app."""
     queue = Queue(args.root)
     removed = queue.prune_expired()
     for bundle in sorted({record["bundleIdentifier"] for record in queue.records()}):
@@ -691,6 +822,25 @@ def command_serve(args: argparse.Namespace) -> None:
     server.daemon_threads = True
     print(f"Serving {args.root} on http://127.0.0.1:{args.port} as {base_url}", flush=True)
     server.serve_forever()
+
+
+def command_admin_token(args: argparse.Namespace) -> None:
+    credential = ManagementCredential(args.root)
+    if args.rotate:
+        credential.rotate()
+    else:
+        credential.ensure()
+    if args.copy:
+        if sys.platform != "darwin":
+            raise ValueError("clipboard copy requires macOS")
+        subprocess.run(["/usr/bin/pbcopy"], input=credential.read().encode("ascii"), check=True)
+        print("Management token copied. Paste it into Deploy Link Settings; it grants queue deletion access.")
+    else:
+        print("Management credential ready. Use admin-token --copy to copy it locally without displaying it.")
+
+
+def command_check_serve(args: argparse.Namespace) -> None:
+    print(serve_route_state(json.load(sys.stdin) or {}, args.base_url, args.port))
 
 
 def parser() -> argparse.ArgumentParser:
@@ -722,6 +872,16 @@ def parser() -> argparse.ArgumentParser:
     serve.add_argument("--base-url", required=True, help="the tailnet HTTPS address that proxies to this port")
     serve.add_argument("--port", type=int, default=DEFAULT_PORT)
     serve.set_defaults(action=command_serve)
+
+    management = commands.add_parser("admin-token", help="create, copy, or rotate the local queue-management credential; never prints it")
+    management.add_argument("--copy", action="store_true", help="copy the token to the macOS clipboard")
+    management.add_argument("--rotate", action="store_true", help="revoke existing management credentials and create a new one")
+    management.set_defaults(action=command_admin_token)
+
+    check_serve = commands.add_parser("check-serve", help="check for conflicting Tailscale routes; reads Serve status JSON on stdin")
+    check_serve.add_argument("--base-url", required=True)
+    check_serve.add_argument("--port", type=int, default=DEFAULT_PORT)
+    check_serve.set_defaults(action=command_check_serve)
     return root
 
 
@@ -729,7 +889,7 @@ def main() -> None:
     args = parser().parse_args()
     try:
         args.action(args)
-    except (OSError, ValueError, plistlib.InvalidFileException, zipfile.BadZipFile) as error:
+    except (OSError, ValueError, plistlib.InvalidFileException, zipfile.BadZipFile, subprocess.CalledProcessError) as error:
         raise SystemExit(f"error: {error}") from error
 
 
