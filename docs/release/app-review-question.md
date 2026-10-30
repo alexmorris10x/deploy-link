@@ -1,8 +1,8 @@
 # Question for App Review
 
-**Status:** Draft only. No appointment booked or message sent. An appointment gives guidance, not preapproval.
+**Status:** Sent to Apple Developer Support on 2026-10-30 through Other App Review questions. Case **103013688812**; reply pending. No appointment was booked. Guidance is not preapproval.
 
-Use [Apple's App Review appointment route](https://developer.apple.com/help/app-review/before-submitting-for-review/app-review-appointment).
+Submitted through [Apple Developer Support](https://developer.apple.com/contact/topic/SC1103/subtopic/30023/solution/select) for Deploy Link, Apple ID `6828728411`. The question below describes the submitted scope. If Apple requests a discussion, use [its App Review appointment route](https://developer.apple.com/help/app-review/before-submitting-for-review/app-review-appointment).
 
 > We are preparing a free developer utility called Deploy Link. A developer runs its open-source Python server on their own Mac, with access restricted to their Tailscale network. The iOS client has no shared catalog or default server; the developer enters their own HTTPS URL and sees their own signed development or ad hoc builds, version notes, and transfer progress.
 >
@@ -14,4 +14,4 @@ Use [Apple's App Review appointment route](https://developer.apple.com/help/app-
 
 Bring a short recording of publishing a harmless signed sample, configuring the HTTPS URL, choosing its install action, and the system prompt. Show the actual network and provisioning requirements; do not describe private build distribution as unrestricted consumer sideloading. Follow the answer rather than silently disguising the installation action.
 
-Apple's [App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/) establish the relevant executable-code restriction. Apple's [in-house app distribution documentation](https://support.apple.com/guide/deployment/distribute-proprietary-in-house-apps-depce7cefc4d/web) describes HTTPS manifests and system install links for a specific distribution program; that document does **not** establish App Store approval for this client or general permission to distribute development/ad hoc apps. Record the precise response here after the appointment, including any conditions and outstanding questions.
+Apple's [App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/) establish the relevant executable-code restriction. Apple's [in-house app distribution documentation](https://support.apple.com/guide/deployment/distribute-proprietary-in-house-apps-depce7cefc4d/web) describes HTTPS manifests and system install links for a specific distribution program; that document does **not** establish App Store approval for this client or general permission to distribute development/ad hoc apps. Record the precise response here when Apple replies, including any conditions and outstanding questions.
