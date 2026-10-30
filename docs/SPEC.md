@@ -4,7 +4,7 @@ Version 1, 2026-10-30. Owner: Alex. Update this file when behavior, access, pric
 
 ## 1. The product in one minute
 
-Deploy Link is a private signed-build queue for an iOS developer's own devices. A free Mac Python server hosts the packages; the free iPhone/iPad client lists them and hands a chosen install link to iOS. It removes the need to find the right build URL repeatedly. The initial release has no subscription or in-app purchase. Both components use Apache 2.0 source; App Store acceptance of the installation workflow remains unresolved.
+Deploy Link is a private signed-build queue for an iOS developer's own devices. A free native Mac app and menu-bar item manage the Python queue server; the free iPhone/iPad client lists them and hands a chosen install link to iOS. It removes the need to find the right build URL repeatedly. The initial release has no subscription or in-app purchase. Both components use Apache 2.0 source; App Store acceptance of the installation workflow remains unresolved.
 
 ## 2. Premise and hook
 
@@ -17,7 +17,7 @@ The first audience is iOS developers comfortable managing signing and Tailscale.
 
 ## 3. The offer and price
 
-Free initially for both iOS and the Mac server. No trial, payment SDK, subscription, account service, or hosted storage tier. The user supplies their own Mac, network access, valid build signing/provisioning, and any required Apple/Tailscale arrangements. A future commercial offer would require a new product decision.
+Free initially for iOS, the Mac app, and the queue server. No trial, payment SDK, subscription, account service, or hosted storage tier. The user supplies their own Mac, network access, valid build signing/provisioning, and any required Apple/Tailscale arrangements. A future commercial offer would require a new product decision.
 
 ## 4. Unit costs and margin
 
@@ -33,7 +33,7 @@ Have a developer publish one of their own appropriately signed apps and identify
 
 ## 7. Platforms and infrastructure
 
-Mac server: Python 3.9+, standard library only, loopback HTTP 8477 behind private Tailscale Serve HTTPS. iOS/iPadOS 17+ SwiftUI client. Defaults: runtime `~/.local/share/deploy-link/`, queue `~/.local/share/ios-ota/queue/`, LaunchAgent `com.10x.deploy-link-ota`. Mac distribution is the source installer, not a bundled Python runtime or Mac App Store app. Native App Store Connect record: `6828728411`; no submitted release is implied. Website: `https://alexmorris10x.github.io/deploy-link/`.
+Mac server: Python 3.9+, standard library only, loopback HTTP 8477 behind private Tailscale Serve HTTPS. iOS/iPadOS 17+ SwiftUI client. Defaults: runtime `~/.local/share/deploy-link/`, queue `~/.local/share/ios-ota/queue/`, LaunchAgent `com.10x.deploy-link-ota`. The macOS 14+ SwiftUI companion provides setup, status, start/stop, separate app/server login controls, queue-address copy, build publishing, and token copy. It preserves the existing queue and uses the installed Python 3.9+ runtime and full Xcode. Distribution is a universal Developer ID-signed, notarized direct download, with the source installer retained as an alternative; it is not a Mac App Store app. Native App Store Connect record: `6828728411`; no submitted release is implied. Website: `https://alexmorris10x.github.io/deploy-link/`.
 
 ## 8. Brand and look
 
@@ -53,6 +53,8 @@ Deploy Link uses the jade download-ribbon/phone icon and native grouped build li
 | Feature | Current state | Main source |
 | --- | --- | --- |
 | Package signed `.app`/`.ipa`, inspect metadata, publish queue | Implemented | `ota/ota_queue.py` |
+| Native Mac window and menu-bar controls | Implemented | `mac/DeployLinkMac`, `mac/Resources/mac_control.py` |
+| Harmless self-signable review sample | Source provided; device install still to verify | `Samples/ReviewSample/` |
 | Private HTTPS setup and login service | Implemented | `scripts/install_ota_queue.sh` |
 | Build grouping, progress, completed-download history | Implemented | `ReleaseStore.swift`, `ReleaseListView.swift`, server |
 | User-provided server and optional token configuration | Implemented | iOS settings/store |
@@ -64,7 +66,7 @@ Publishing keeps only the newest build per app by default; `--keep N` explicitly
 
 ## 11. Screens
 
-An empty client explains setup and offers **Connect Your Mac**. Settings contains **Mac address**, **Management token (optional)**, save/cancel, and privacy/support links. The queue groups releases by app with notes and transfer status. Reinstall/downgrade actions require confirmation; queue removal states that it deletes the server copy for all devices, without uninstalling an app.
+The Mac window shows prerequisites, queue status/address, latest builds, Add Build, separate app/server login switches, and optional management-access copy. Its menu-bar item exposes the queue, Add Build, address copy, and start/stop. Closing or quitting the app leaves an independently configured server running. An empty iOS client explains setup and offers **Connect Your Mac**. Settings contains **Mac address**, **Management token (optional)**, save/cancel, and privacy/support links. The queue groups releases by app with notes and transfer status. Reinstall/downgrade actions require confirmation; queue removal states that it deletes the server copy for all devices, without uninstalling an app.
 
 ## 12. Quality bar
 
@@ -87,4 +89,4 @@ Public build marketplace, signing service, bypassing device/provisioning restric
 
 ## 15. Decisions and remaining questions
 
-**Decided (2026-10-30):** free launch, user-owned HTTPS server, optional management token, accurate transfer wording, Apache 2.0 source, and direct Mac source installation. **Assumptions:** developers will accept the prerequisite setup and find the queue useful. **Open external question:** App Review treatment of native `itms-services` links and review-device provisioning; the [question](release/app-review-question.md) was sent as Apple Developer Support case `103013688812` on 2026-10-30; reply pending. The Developer Program agreement is accepted, and the Free/Paid Apps agreements are Active. Submission and release remain separate actions.
+**Decided (2026-10-30):** free launch, user-owned HTTPS server, optional management token, accurate transfer wording, Apache 2.0 source, a native Mac app/menu-bar item with a signed direct download, and an optional source installer. **Assumptions:** developers will accept the prerequisite setup and find the queue useful. **Open external question:** App Review treatment of native `itms-services` links and review-device provisioning; the [question](release/app-review-question.md) was sent as Apple Developer Support case `103013688812` on 2026-10-30; reply pending. The Developer Program agreement is accepted, and the Free/Paid Apps agreements are Active. Submission and release remain separate actions.

@@ -1,0 +1,339 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		0AC6E9603E95E65FBB6E02E0 /* mac_control.py in Resources */ = {isa = PBXBuildFile; fileRef = D1CCF4ABC434B5551B774CC8 /* mac_control.py */; };
+		3E8B2615FAB33F9E616A045C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 04B53D920F47BC435934E382 /* Assets.xcassets */; };
+		91E5937AF90F307C9CFF6662 /* DeployLinkMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DFD3A100AD534012E5BE611 /* DeployLinkMacApp.swift */; };
+		B627599340347BC2B721A767 /* ota in Resources */ = {isa = PBXBuildFile; fileRef = 7FD13EFB5881944DBF54490F /* ota */; };
+		CE9727F5DFF1106B21BC6000 /* scripts in Resources */ = {isa = PBXBuildFile; fileRef = 35295DD90B8AC949F104EEFF /* scripts */; };
+		EA735DDD4510F92F0FC2043E /* QueueModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D19FF863E58C8AB5B7C600FE /* QueueModel.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		04B53D920F47BC435934E382 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		2DFD3A100AD534012E5BE611 /* DeployLinkMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeployLinkMacApp.swift; sourceTree = "<group>"; };
+		35295DD90B8AC949F104EEFF /* scripts */ = {isa = PBXFileReference; lastKnownFileType = folder; name = scripts; path = ../scripts; sourceTree = SOURCE_ROOT; };
+		35EE842C48AAEDC81FDF2FEF /* DeployLinkMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DeployLinkMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7FD13EFB5881944DBF54490F /* ota */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ota; path = ../ota; sourceTree = SOURCE_ROOT; };
+		D19FF863E58C8AB5B7C600FE /* QueueModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QueueModel.swift; sourceTree = "<group>"; };
+		D1CCF4ABC434B5551B774CC8 /* mac_control.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = mac_control.py; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		60E6A53C0E9CD8FB4CF7891C /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				35EE842C48AAEDC81FDF2FEF /* DeployLinkMac.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		718171DC315B830EF47DF288 = {
+			isa = PBXGroup;
+			children = (
+				7FD13EFB5881944DBF54490F /* ota */,
+				35295DD90B8AC949F104EEFF /* scripts */,
+				7FC4D18C1DE3BF5F6A4A6B39 /* DeployLinkMac */,
+				C6E54362187B8320220A1214 /* Resources */,
+				60E6A53C0E9CD8FB4CF7891C /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		7FC4D18C1DE3BF5F6A4A6B39 /* DeployLinkMac */ = {
+			isa = PBXGroup;
+			children = (
+				04B53D920F47BC435934E382 /* Assets.xcassets */,
+				2DFD3A100AD534012E5BE611 /* DeployLinkMacApp.swift */,
+				D19FF863E58C8AB5B7C600FE /* QueueModel.swift */,
+			);
+			path = DeployLinkMac;
+			sourceTree = "<group>";
+		};
+		C6E54362187B8320220A1214 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				D1CCF4ABC434B5551B774CC8 /* mac_control.py */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		0D9071B69590B1D47F2EE29A /* DeployLinkMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1653FB30FFCAA7265724A15E /* Build configuration list for PBXNativeTarget "DeployLinkMac" */;
+			buildPhases = (
+				F69FDDB1C83E94D066D3AE33 /* Sources */,
+				AE5BEA69FA6E3C7169BAD3E5 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = DeployLinkMac;
+			packageProductDependencies = (
+			);
+			productName = DeployLinkMac;
+			productReference = 35EE842C48AAEDC81FDF2FEF /* DeployLinkMac.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		9EB6990BF5C6F126B002D679 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					0D9071B69590B1D47F2EE29A = {
+						DevelopmentTeam = 98CDQPW36W;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 198B2CA52952D70395C66467 /* Build configuration list for PBXProject "DeployLinkMac" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 718171DC315B830EF47DF288;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 60E6A53C0E9CD8FB4CF7891C /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				0D9071B69590B1D47F2EE29A /* DeployLinkMac */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AE5BEA69FA6E3C7169BAD3E5 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3E8B2615FAB33F9E616A045C /* Assets.xcassets in Resources */,
+				0AC6E9603E95E65FBB6E02E0 /* mac_control.py in Resources */,
+				B627599340347BC2B721A767 /* ota in Resources */,
+				CE9727F5DFF1106B21BC6000 /* scripts in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		F69FDDB1C83E94D066D3AE33 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				91E5937AF90F307C9CFF6662 /* DeployLinkMacApp.swift in Sources */,
+				EA735DDD4510F92F0FC2043E /* QueueModel.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		4C45C048E365DFD9BA5DA354 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSHighResolutionCapable = YES;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Deploy Link checks the private build queue running on this Mac.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.10x.deploylink.mac;
+				PRODUCT_NAME = "Deploy Link";
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		6B4D2E328AFFF3A3A3ABF221 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 98CDQPW36W;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		713826D71649319E71F60505 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 98CDQPW36W;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		7DA1BC11AF67C9080B04E9F6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_NSHighResolutionCapable = YES;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Deploy Link checks the private build queue running on this Mac.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.10x.deploylink.mac;
+				PRODUCT_NAME = "Deploy Link";
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		1653FB30FFCAA7265724A15E /* Build configuration list for PBXNativeTarget "DeployLinkMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7DA1BC11AF67C9080B04E9F6 /* Debug */,
+				4C45C048E365DFD9BA5DA354 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		198B2CA52952D70395C66467 /* Build configuration list for PBXProject "DeployLinkMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6B4D2E328AFFF3A3A3ABF221 /* Debug */,
+				713826D71649319E71F60505 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 9EB6990BF5C6F126B002D679 /* Project object */;
+}

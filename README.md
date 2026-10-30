@@ -1,6 +1,6 @@
 # Deploy Link
 
-A private queue for your signed iOS development builds. Publish a build on your Mac, then choose it on your iPhone or iPad and confirm the iOS installation prompt. The iOS client and Mac Python server are free for the initial launch, with original source under [Apache 2.0](LICENSE).
+A private queue for your signed iOS development builds. Add a build in the Mac app or from the command line, then choose it on your iPhone or iPad and confirm the iOS installation prompt. The native Mac companion, Python server, and iOS client are free for the initial launch, with original source under [Apache 2.0](LICENSE).
 
 - [Setup](docs/site/setup.html), [support](docs/site/support.html), [privacy](docs/site/privacy.html)
 - [Product specification](docs/SPEC.md) and [remaining launch work](docs/TODO.md)
@@ -24,7 +24,17 @@ The server packages a signed device app, reads its bundle/version/profile metada
 
 ## Set up your Mac
 
-Requires macOS, full Xcode with its command-line tools selected in Xcode’s Locations settings, Python 3.9 or newer, Tailscale on both devices, and a valid signed iOS build for the intended devices/distribution method. The standalone Command Line Tools package is insufficient. The Mac must remain awake and signed in while serving. Tailscale has its own [plans](https://tailscale.com/pricing) and [terms](https://tailscale.com/terms).
+The native Mac companion requires macOS 14 or later and supports Apple silicon and Intel. Its signed, notarized download is being prepared; until it is published, use the source installation below. Release availability is listed on the [download page](https://alexmorris10x.github.io/deploy-link/#download).
+
+Install full Xcode with its command-line tools selected in Xcode’s Locations settings, Python 3.9 or newer, and Tailscale on the Mac and iPhone/iPad. These prerequisites are separate from Deploy Link. The standalone Command Line Tools package is insufficient. You also need a valid signed iOS build for the intended devices/distribution method. The Mac must remain awake and signed in while serving. Tailscale has its own [plans](https://tailscale.com/pricing) and [terms](https://tailscale.com/terms).
+
+### Native Mac companion
+
+When the Mac download is available, open its disk image, drag **Deploy Link** into **Applications**, and open it. Use the setup control to install the bundled server. The app keeps a menu-bar item with server status, start/stop controls, queue opening and address copying, build publishing, and launch-at-login settings. Closing its window leaves the menu-bar item available.
+
+Use **Add Build** to choose a signed device `.app` or `.ipa`, add a note, and publish it to your queue. Open or copy the queue address to connect your iPhone or iPad. The Mac app uses the same server, queue, and management token as the command-line setup. An existing installation is detected; updating the server preserves its queue and token. Quitting the Mac app does not erase builds or stop the separate server service.
+
+### Command-line installation
 
 Clone this repository or extract its source ZIP. Read the installer, then run it locally:
 
@@ -79,7 +89,9 @@ Publishing retains the newest release per app by default (`--keep N` changes tha
 
 ## Update, build, and contribute
 
-Update the source and rerun the installer to replace the server while preserving the queue and token. Custom-path and uninstall instructions are in [distribution](docs/release/distribution.md) and [setup](docs/site/setup.html).
+For the native app, replace the application with a newer downloaded version. The separately installed server is preserved; to update it, get the current source and rerun the installer. This preserves the queue and token. Custom-path and uninstall instructions are in [distribution](docs/release/distribution.md) and [setup](docs/site/setup.html).
+
+The macOS app is in `mac/`. Run `xcodegen generate` there and build the **DeployLinkMac** scheme. The release product is **Deploy Link.app** (`com.10x.deploylink.mac`). [The distribution guide](docs/release/distribution.md) covers the Developer ID signing and notarization script; building the package does not install or start the server.
 
 The iOS app is in `companion/` and uses XcodeGen. Run `xcodegen generate` there. The **DeployLinkCompanion** scheme builds **Deploy Link Dev** (`com.10x.deploylink.dev`) in Debug and **Deploy Link** (`com.10x.deploylink`) in Release. Use your own authorized signing team; the maintainer's checked-in team does not grant signing rights. Maintainer builds use `~/bin/ios-dev-build`.
 
