@@ -10,7 +10,7 @@ The page intentionally has no App Store badge before publication. Add the real l
 
 ## Native Mac release
 
-Project: `mac/project.yml`; generated project: `mac/DeployLinkMac.xcodeproj`; scheme: `DeployLinkMac`; product: `Deploy Link.app`; bundle: `com.10x.deploylink.mac`. The app requires macOS 14 or later. Release builds contain both `arm64` and `x86_64` architectures.
+Project: `mac/project.yml`; generated project: `mac/DeployLinkMac.xcodeproj`; scheme: `DeployLinkMac`; product: `Deploy Link.app`; bundle: `com.10x.deploylink.mac`. The app requires macOS 14 or later. Release builds contain both `arm64` and `x86_64` architectures. Debug builds the separate `Deploy Link Dev.app` (`com.10x.deploylink.mac.dev`, DEV icon) for Alex's own Mac; it drives the same server, queue and token.
 
 The companion bundles the queue server and installer. Xcode, Python 3.9+, and Tailscale are installed separately. Opening the app shows server status and setup; its menu-bar item provides queue opening/address copying, build publishing, server start/stop, and app launch-at-login controls. Closing the app window leaves the menu-bar item available. The server is a separate login LaunchAgent, so quitting the companion does not stop it. Replacing the Mac app preserves the existing queue and management token. To update the separately installed server, update the source and rerun its installer; the companion does not automatically replace a running server.
 
