@@ -37,8 +37,10 @@ fi
 [[ -n "${python}" ]] || fail 'Install Python 3.9 or later from python.org, then run this installer again.'
 "${python}" -c 'import sys; sys.exit(sys.version_info < (3, 9))' || fail 'Python 3.9 or later is required.'
 
-# Save the absolute interpreter selected by this installation for launchd.
-python="$("${python}" -c 'import sys; print(sys.executable)')"
+# Save the selected interpreter's absolute path for launchd without following symlinks:
+# sys.executable would pin a versioned Xcode or Homebrew Cellar path that disappears
+# when Xcode or Python is updated, while /usr/bin/python3 follows xcode-select.
+[[ "${python}" == /* ]] || python="$(cd "$(dirname "${python}")" && pwd)/$(basename "${python}")"
 tailscale="${DEPLOY_LINK_TAILSCALE:-}"
 if [[ -n "${tailscale}" ]]; then
   [[ -x "${tailscale}" ]] || fail 'DEPLOY_LINK_TAILSCALE must name the Tailscale executable.'
