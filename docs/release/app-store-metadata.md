@@ -71,3 +71,5 @@ Reviewer-owned setup requires a Mac with full Xcode, Python 3.9 or newer, Tailsc
 The source has no tracking or developer telemetry endpoint. Its user-run server stores build metadata and transfer/device records, and the public privacy policy describes this. Complete App Privacy against the exact submitted build and current questionnaire rather than treating that statement as a prefilled answer.
 
 Alex handles TestFlight and App Store submission. The support question was sent by email through Apple Developer Support; no appointment was booked and no submission or approval is claimed.
+
+Screenshots and purchase-review images as uploaded: [screenshots/](screenshots/README.md) (moved from Google Drive on 1 Nov 2026).
