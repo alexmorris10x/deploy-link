@@ -98,3 +98,7 @@ The iOS app is in `companion/` and uses XcodeGen. Run `xcodegen generate` there.
 The launch change's 25 Python server tests passed, and a signed iOS device build passed. Those checks do not establish installation acceptance for another developer's provisioning or App Store approval. See [TODO](docs/TODO.md) for the remaining customer setup and release inputs. Run `python3 ota/test_ota_queue.py` when changing the server.
 
 No app build, private provisioning file, management token, or personal server address belongs in a public issue. Both source components are inspectable; that is not a security-audit claim.
+
+## Product research and operating notes
+
+[Material imported from Google Drive](docs/Drive%20imports.md). Product knowledge is kept in this repo; dated deliverables live in the weekly Agent Work desk.
