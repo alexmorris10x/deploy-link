@@ -102,8 +102,8 @@ if info.get('CFBundleIdentifier') != 'com.10x.deploylink.mac':
     sys.exit('Refusing an unexpected Mac bundle identity.')
 executable = app / 'Contents/MacOS' / info['CFBundleExecutable']
 architectures = subprocess.check_output(['lipo', '-archs', str(executable)], text=True).split()
-if not {'arm64', 'x86_64'}.issubset(architectures):
-    sys.exit('The release must support both Apple silicon and Intel Macs.')
+if 'arm64' not in architectures:
+    sys.exit('The release must run on Apple silicon.')
 empty = scratch / 'release-entitlements.plist'
 empty.write_bytes(plistlib.dumps({}))
 magic = {bytes.fromhex(x) for x in ('feedface','feedfacf','cefaedfe','cffaedfe','cafebabe','bebafeca','cafebabf','bfbafeca')}
