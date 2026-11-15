@@ -83,7 +83,7 @@ xcodegen generate
   -project DeployLinkMac.xcodeproj -scheme DeployLinkMac -configuration Release \
   -destination 'generic/platform=macOS' -archivePath "$archive" \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
-  ENABLE_HARDENED_RUNTIME=YES ONLY_ACTIVE_ARCH=NO 'ARCHS=arm64 x86_64' archive
+  ENABLE_HARDENED_RUNTIME=YES ONLY_ACTIVE_ARCH=NO ARCHS=arm64 archive
 source_app="$archive/Products/Applications/Deploy Link.app"
 [[ -d "$source_app" ]] || die "Expected archive product missing: $source_app"
 app="$stage/Deploy Link.app"
